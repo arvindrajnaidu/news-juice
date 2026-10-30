@@ -1,0 +1,15 @@
+{
+  "url": "https://indianexpress.com/article/cities/delhi/caqm-bans-construction-demolition-delhi-ncr-november-5-20-bhupender-yadav-work-from-home-air-pollution-10943786/",
+  "captured": "2026-10-30",
+  "capturedWith": "test/capture-page.js in the iOS app (iPhone 18 Pro Simulator, WKWebView). Consent and sign-in banners were left as they were.",
+  "title": "Construction ban across Delhi-NCR from Nov 5; WFH curbs on the cards",
+  "bodyGroup": "17px pt serif",
+  "firstParagraph": "Dust-generating demolition and outdoor civil construction will be banned across the National Capital Region from November 5 to 20, Union Environment Minister Bhupender Yadav said on Friday, as the region enters what he called its “peak time” for air pollution. A work-from-home order is also being considered, officials said.",
+  "lastParagraph": "These measures continue when higher GRAP stages are activated, subject to the applicable schedule.",
+  "paragraphs": 10,
+  "exclude": [
+    "section/nav links",
+    "author bio",
+    "GRAP explainer box is borderline"
+  ]
+}

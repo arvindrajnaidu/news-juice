@@ -67,7 +67,7 @@ for (const start of urls) {
     await view.screenshot({ path: path.join(dir, 'lifted.png') });
     await view.close();
     row.id = id;
-    console.log(`ok   ${row.url}  body=${result.bodySize}px  ${result.bodyChars} chars  ${result.blocks.length} blocks`);
+    console.log(`ok   ${row.url}  ${result.groups.length} groups, biggest: ${result.groups[0] && result.groups[0].id}`);
   } catch (e) {
     row.error = String(e.message || e).split('\n')[0];
     console.log(`fail ${start}  ${row.error}`);
@@ -78,8 +78,7 @@ for (const start of urls) {
 await browser.close();
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const hist = (h) => Object.entries(h || {}).sort((a, b) => b[1] - a[1]).slice(0, 6)
-  .map(([s, n]) => `${s}px: ${n}`).join(' · ');
+const top = (groups) => (groups || []).slice(0, 6).map((g) => `${g.id}: ${g.chars}`).join(' · ');
 
 const report = `<!doctype html><meta charset="utf-8"><title>Lift report</title>
 <style>
@@ -93,7 +92,7 @@ body{font:14px system-ui,sans-serif;margin:24px;background:#f4f2ee;color:#222}
 </style>
 <h1>Lift report</h1><p>${rows.filter((r) => r.result?.ok).length} of ${rows.length} pages lifted. Generated ${new Date().toISOString()}</p>
 ${rows.map((r) => `<div class="row"><h2>${esc(r.url || r.start)}</h2>${r.error ? `<p class="err">${esc(r.error)}</p>` : `
-<p class="meta">Title: <b>${esc(r.result.title)}</b><br>Body size ${r.result.bodySize}px · kept ${r.result.bodyChars} of ${r.result.pageChars} page chars · ${r.result.blocks.length} blocks · container <code>${esc(r.result.container)}</code> · ${r.ms} ms<br>Font sizes by text: ${esc(hist(r.result.histogram))}</p>
+<p class="meta">Title: <b>${esc(r.result.title)}</b><br>${r.result.groups.length} style groups · ${r.result.blocks.length} blocks · ${r.ms} ms<br>Biggest groups (chars): ${esc(top(r.result.groups))}</p>
 <div class="shots"><figure><img src="${r.id}/before.png"><figcaption>Before</figcaption></figure>
 <figure><img src="${r.id}/lifted.png"><figcaption>Lifted · <a href="${r.id}/lifted.html">full text</a></figcaption></figure></div>`}</div>`).join('\n')}`;
 await fs.writeFile(path.join(outDir, 'index.html'), report);

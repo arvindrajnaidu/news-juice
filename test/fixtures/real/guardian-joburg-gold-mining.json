@@ -1,0 +1,15 @@
+{
+  "url": "https://www.theguardian.com/business/2026/oct/30/sinkholes-scarred-land-scapegoats-illegal-gold-mining-johannesburg",
+  "captured": "2026-10-30",
+  "capturedWith": "test/capture-page.js in the iOS app (iPhone 18 Pro Simulator, WKWebView). Consent and sign-in banners were left as they were.",
+  "title": "Sinkholes, scarred land and scapegoats: the scourge of illegal gold mining in Johannesburg",
+  "bodyGroup": "17px guardiantextegyptian",
+  "firstParagraph": "Cora Bailey has been encountering illegal miners ever since she first started treating injured animals in the townships around Roodepoort, west of Johannesburg, in 1991. But as the price of gold has soared, so too has activity in the abandoned mine shafts that mark the area.",
+  "lastParagraph": "While Cele, 33, currently hustles above ground selling mobile phone covers and screen protectors, he said he too would mine if he could get a licence. “On the surface there’s peanuts,” he said. “Underground there’s money.”",
+  "paragraphs": 25,
+  "exclude": [
+    "Support the Guardian appeal",
+    "nav links",
+    "related-topic tags"
+  ]
+}

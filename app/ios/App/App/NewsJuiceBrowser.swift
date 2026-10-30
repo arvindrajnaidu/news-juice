@@ -19,7 +19,7 @@ class MainViewController: CAPBridgeViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         #if DEBUG
-        // `xcrun simctl launch <device> com.nerdylotus.glance -NJOpenURL https://...`
+        // `xcrun simctl launch <device> com.buzzie.newslens -NJOpenURL https://...`
         // opens a page straight away, for testing.
         if let url = UserDefaults.standard.string(forKey: "NJOpenURL").flatMap(URL.init(string:)),
            presentedViewController == nil {
@@ -89,6 +89,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
             config.userContentController.addUserScript(
                 WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         }
+        // reader.js saves a site's recipe (the text groups to keep) through this handler.
+        config.userContentController.add(RecipeHandler(), name: "newsJuice")
         // Sites tailor their markup to the user agent; look like Mobile Safari.
         config.applicationNameForUserAgent = "Version/26.0 Mobile/15E148 Safari/604.1"
 
@@ -222,15 +224,18 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
     }
 
     private func lift() {
+        let recipe = webView.url?.host.flatMap(RecipeHandler.recipe(forHost:))
+        let recipeJSON = recipe.flatMap { try? JSONSerialization.data(withJSONObject: $0) }
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "null"
         let js = """
         (function () {
           if (!window.NewsJuice || !NewsJuice.lift) return JSON.stringify({ ok: false, reason: 'lift.js not loaded' });
           var t0 = Date.now();
           var r = NewsJuice.lift();
-          if (r.ok) NewsJuice.showReader(r);
+          if (r.ok) NewsJuice.showReader(r, { recipe: \(recipeJSON) });
           return JSON.stringify({ ok: r.ok, reason: r.reason, ms: Date.now() - t0, title: r.title,
-            bodySize: r.bodySize, bodyChars: r.bodyChars, pageChars: r.pageChars,
-            blocks: r.blocks.length, container: r.container, url: location.href });
+            groups: r.groups.length, blocks: r.blocks.length, recipe: \(recipeJSON), url: location.href,
+            top: r.groups.slice(0, 5).map(function (g) { return g.id + ' (' + g.chars + ')'; }) });
         })()
         """
         webView.evaluateJavaScript(js) { [weak self] value, error in
@@ -269,7 +274,51 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         titleLabel.text = webView.url?.host
         readerUp = false // a new page starts without the reader
         updateLiftLabel()
+        #if DEBUG
+        debugRunDone = false
+        #endif
     }
+
+    #if DEBUG
+    // Testing hooks, set as launch arguments:
+    //   -NJAutoLift <seconds>   lift that long after the page finishes loading and write
+    //                           the full result to Documents/lift-<page>.json
+    //   -NJCapture YES          then also save a fixture snapshot (test/capture-page.js)
+    //                           to Documents/capture-<page>.html
+    private var debugRunDone = false
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        let delay = UserDefaults.standard.double(forKey: "NJAutoLift")
+        guard delay > 0, !debugRunDone else { return }
+        debugRunDone = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.debugRun() }
+    }
+
+    private func debugRun() {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let page = (webView.url.map { ($0.host ?? "") + $0.path } ?? "page")
+            .replacingOccurrences(of: "[^A-Za-z0-9]+", with: "-", options: .regularExpression)
+            .prefix(80)
+        let js = "(function () { var t0 = Date.now(); var r = NewsJuice.lift(); r.ms = Date.now() - t0; return JSON.stringify(r, null, 2); })()"
+        webView.evaluateJavaScript(js) { [weak self] value, error in
+            guard let self else { return }
+            let json = (value as? String) ?? "{\"error\": \"\(error?.localizedDescription ?? "unknown")\"}"
+            try? json.write(to: docs.appendingPathComponent("lift-\(page).json"), atomically: true, encoding: .utf8)
+            NSLog("NewsJuice debug lift saved lift-%@.json", String(page))
+            guard UserDefaults.standard.bool(forKey: "NJCapture"),
+                  let file = Bundle.main.url(forResource: "capture-page", withExtension: "js", subdirectory: "public/debug"),
+                  let capture = try? String(contentsOf: file, encoding: .utf8) else { return }
+            self.webView.evaluateJavaScript(capture) { value, error in
+                guard let html = value as? String else {
+                    NSLog("NewsJuice capture failed: %@", error?.localizedDescription ?? "unknown")
+                    return
+                }
+                try? html.write(to: docs.appendingPathComponent("capture-\(page).html"), atomically: true, encoding: .utf8)
+                NSLog("NewsJuice debug capture saved capture-%@.html", String(page))
+            }
+        }
+    }
+    #endif
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -281,5 +330,29 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
             if let url = action.request.url { UIApplication.shared.open(url) }
             decisionHandler(.cancel)
         }
+    }
+}
+
+/// Stores each site's recipe (the style groups to keep in the reader) in UserDefaults,
+/// keyed by host without "www.", so it applies to every page on that site.
+final class RecipeHandler: NSObject, WKScriptMessageHandler {
+    private static let key = "NJRecipes"
+
+    static func recipe(forHost host: String) -> [String]? {
+        let all = UserDefaults.standard.dictionary(forKey: key) as? [String: [String]]
+        return all?[normalize(host)]
+    }
+
+    private static func normalize(_ host: String) -> String {
+        host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any], body["type"] as? String == "saveRecipe",
+              let host = body["host"] as? String, let keep = body["keep"] as? [String] else { return }
+        var all = UserDefaults.standard.dictionary(forKey: Self.key) as? [String: [String]] ?? [:]
+        all[Self.normalize(host)] = keep
+        UserDefaults.standard.set(all, forKey: Self.key)
+        NSLog("NewsJuice recipe for %@: %@", host, keep.joined(separator: " | "))
     }
 }

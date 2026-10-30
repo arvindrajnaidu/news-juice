@@ -1,0 +1,16 @@
+{
+  "url": "https://www.ndtv.com/india-news/delhi-air-quality-drops-to-78-after-record-rain-brings-winter-chill-12259791",
+  "captured": "2026-10-30",
+  "capturedWith": "test/capture-page.js in the iOS app (iPhone 18 Pro Simulator, WKWebView). Consent and sign-in banners were left as they were.",
+  "title": "Delhi Air Quality Drops To 78 After Record Rain Brings Winter Chill",
+  "bodyGroup": "18px inter",
+  "firstParagraph": "According to the IMD, weather conditions over Delhi-NCR will gradually turn drier with partly cloudy skies on October 31 and November 1, followed by clearer conditions.",
+  "lastParagraph": "Show full article",
+  "paragraphs": 28,
+  "exclude": [
+    "\"Featured Video Of The Day\" block and its video headline",
+    "Trending News carousel",
+    "READ | ... also-read links",
+    "\"Advertisement\" labels"
+  ]
+}

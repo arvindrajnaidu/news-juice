@@ -1,0 +1,15 @@
+{
+  "url": "https://www.hindustantimes.com/india-news/rafale-m-carries-out-maiden-landing-take-off-from-ins-vikrant-101793359355241.html",
+  "captured": "2026-10-30",
+  "capturedWith": "test/capture-page.js in the iOS app (iPhone 18 Pro Simulator, WKWebView). Consent and sign-in banners were left as they were.",
+  "title": "Rafale M carries out maiden landing, take-off on INS Vikrant",
+  "bodyGroup": "18px dm sans",
+  "firstParagraph": "A Rafale Marine fighter jet landed on and took off from the Indian Navy’s indigenous aircraft carrier INS Vikrant for the first time on Thursday, officials aware of the matter said. The ongoing trials, ahead of the induction of these fighters, mark the first steps towards operationalising the aircraft in the navy, they said on Friday.",
+  "lastParagraph": "Discussions have been held with France regarding the localisation of the Rafales to be manufactured in India, the integration of local weapons and other India-specific requirements. On October 3, IAF chief Air Chief Marshal AP Singh said the air force is counting on the timely induction of the new Rafales, LCA Mk-1A and additional Sukhoi-30MKIs to shore up its fighter fleet and keep its combat squadron numbers from falling below 30, compared to a sanctioned 42.5.",
+  "paragraphs": 11,
+  "exclude": [
+    "author bio (16px lato)",
+    "Also Read links",
+    "Saved Articles / nav"
+  ]
+}

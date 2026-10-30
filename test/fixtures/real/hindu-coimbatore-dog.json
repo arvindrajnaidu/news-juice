@@ -1,0 +1,15 @@
+{
+  "url": "https://www.thehindu.com/news/cities/Coimbatore/owner-of-coimbatore-pet-boarding-facility-booked-after-indie-dog-dies-under-care-due-to-alleged-negligence/article71644568.ece",
+  "captured": "2026-10-30",
+  "capturedWith": "test/capture-page.js in the iOS app (iPhone 18 Pro Simulator, WKWebView). Consent and sign-in banners were left as they were.",
+  "title": "Owner of Coimbatore pet boarding facility booked after Indie dog dies under care due to alleged negligence",
+  "bodyGroup": "17px faustina",
+  "firstParagraph": "The police have registered a case against the owner of a pet boarding centre at Saravanampatty in Coimbatore after an Indie dog lodged at the facility for care died of alleged negligence earlier this month.",
+  "lastParagraph": "Revathi Thangavel, owner of Cuddle Club House – Cage Free Dog Boarding and Grooming, was booked for offence under Section 11 (treating animals cruelly) of the Prevention of Cruelty to Animals Act, based on a complaint lodged by Adarsh Chandrasekaran, a resident of Fathima Nagar at Saravanampatty.",
+  "paragraphs": 2,
+  "exclude": [
+    "\"Most Popular\" and \"In Case You Missed It\" headline lists (link text)",
+    "cookie notice",
+    "the article is short on the page (paywalled site): 2 paragraphs"
+  ]
+}

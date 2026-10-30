@@ -1,0 +1,13 @@
+{
+  "url": "https://www.astralcodexten.com/p/ai-safety-is-not-a-corporate-plot",
+  "captured": "2026-10-30",
+  "capturedWith": "test/capture-page.js in the iOS app (iPhone 18 Pro Simulator, WKWebView). Consent and sign-in banners were left as they were.",
+  "title": "Astral Codex Ten",
+  "bodyGroup": "17px sf pro display",
+  "firstParagraph": "AI companies like Anthropic and OpenAI have long mentioned the possibility that their products could be existentially dangerous, but this has recently crescendoed into even more dire warnings, including suggestions that we have to pace the frontier, ie coordinate to slow AI progress.",
+  "lastParagraph": "This is idiotic and requires otherwise smart people to constantly contort themselves to figure out the latest less-than-entirely-depraved person’s angle. Maybe some people are so venal that they can’t imagine anyone truly caring about the welfare of humanity, but they should stop projecting this on everyone else. The experts are warning you that AI could kill you because they think AI could kill you. Many of them have made personal sacrifices to get the message out. Stop adding thumbtacks to your conspiracy corkboard and take their message seriously.",
+  "paragraphs": 53,
+  "exclude": [
+    "the comments (15px system-ui, ~1000 blocks: the biggest group on the page, so the default pick is wrong here)"
+  ]
+}

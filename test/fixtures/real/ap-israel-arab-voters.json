@@ -1,0 +1,15 @@
+{
+  "url": "https://apnews.com/article/israel-palestinians-elections-arab-voters-d601dc14b4b3d4f183b6f747b1f5e7b7",
+  "captured": "2026-10-30",
+  "capturedWith": "test/capture-page.js in the iOS app (iPhone 18 Pro Simulator, WKWebView). Consent and sign-in banners were left as they were.",
+  "title": "For Palestinian citizens of Israel, a historic vote born of fear and frustration",
+  "bodyGroup": "16px ap",
+  "firstParagraph": "SAKHNIN, Israel (AP) — For Palestinian citizens of Israel, it was a rare moment of political triumph.",
+  "lastParagraph": "The parties worked hard to overcome past reluctance to vote among Palestinians, who have long felt ignored in the halls of power. They held community meetings in cities and towns that Jewish-led parties mostly ignored. A grassroots movement went door-to-door in Bedouin villages to encourage women to vote.",
+  "paragraphs": 14,
+  "exclude": [
+    "Related Stories",
+    "nav carousel",
+    "photo-gallery captions (13px) are optional"
+  ]
+}

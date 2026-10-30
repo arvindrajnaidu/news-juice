@@ -1,0 +1,14 @@
+{
+  "url": "https://www.bbc.com/news/articles/c574p7z1xm8wo",
+  "captured": "2026-10-30",
+  "capturedWith": "test/capture-page.js in the iOS app (iPhone 18 Pro Simulator, WKWebView). Consent and sign-in banners were left as they were.",
+  "title": "Many Cubans voted for Trump - now they're turning on Republican immigration policies",
+  "bodyGroup": "16px bbc reith serif",
+  "firstParagraph": "Since the Trump administration launched its crackdown on undocumented immigrants two years ago, the waiting room of Cuban-born immigration lawyer, Ismael Labrador, in Miami is never empty. His appointment book is packed with relatives of detained immigrants trying to secure their release before they're deported back to their countries of origin.",
+  "lastParagraph": "Follow the twists and turns of Trump's second term with North America correspondent Anthony Zurcher's US Politics Unspun newsletter. Readers in the UK can sign up here. Those outside the UK can sign up here.",
+  "paragraphs": 43,
+  "exclude": [
+    "related headlines at the end (link groups)",
+    "byline line \"Will Grant...\" is optional"
+  ]
+}
