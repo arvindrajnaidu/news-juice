@@ -21,8 +21,11 @@
     '.nj-top{position:sticky;top:0;z-index:1;background:inherit;border-bottom:1px solid transparent}',
     '.nj-handle{display:flex;justify-content:center;padding:10px;cursor:pointer}',
     '.nj-handle span{width:44px;height:5px;border-radius:3px;background:#c9c2b6}',
-    '.nj-toggle{display:block;width:100%;box-sizing:border-box;margin:0;padding:0 20px 10px;border:0;background:none;color:#7a7368;',
+    '.nj-head{display:flex;align-items:center;gap:8px;padding:0 16px 10px 20px}',
+    '.nj-toggle{flex:1;min-width:0;margin:0;padding:0;border:0;background:none;color:#7a7368;',
     '  font:600 13px system-ui,sans-serif;text-align:left;cursor:pointer}',
+    '.nj-fold{flex:none;margin:0;padding:6px 14px;border:0;border-radius:999px;background:#e8a317;color:#000;',
+    '  font:600 14px system-ui,sans-serif;cursor:pointer}',
     '.nj-panel{display:none;max-height:45vh;overflow-y:auto;padding:0 12px 10px;font:14px/1.35 system-ui,sans-serif}',
     '.nj-panel.open{display:block}',
     '.nj-row{display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;margin:0;padding:8px;border:0;',
@@ -142,28 +145,35 @@
     host.id = 'news-juice-reader';
     var root = host.attachShadow({ mode: 'open' });
     root.innerHTML = '<style>' + CSS + '</style><div class="nj-sheet"><div class="nj-top">' +
-      '<div class="nj-handle"><span></span></div><button class="nj-toggle"></button>' +
+      '<div class="nj-handle"><span></span></div>' +
+      '<div class="nj-head"><button class="nj-toggle"></button><button class="nj-fold"></button></div>' +
       '<div class="nj-panel' + (saved ? '' : ' open') + '"></div></div><div class="nj-body"></div></div>';
     document.documentElement.appendChild(host);
 
     var sheet = root.querySelector('.nj-sheet');
     var panel = root.querySelector('.nj-panel');
     var toggle = root.querySelector('.nj-toggle');
+    var fold = root.querySelector('.nj-fold');
     var body = root.querySelector('.nj-body');
     var render = function () {
       var open = panel.classList.contains('open');
       toggle.textContent = (open ? '▾ ' : '▸ ') + 'Text on this page · keeping ' + keep.length + ' of ' + r.groups.length;
+      fold.textContent = open ? 'Hide' : 'Edit';
+      fold.setAttribute('aria-expanded', open);
       panel.innerHTML = panelHTML(r, keep);
       body.innerHTML = bodyHTML(r, keep);
     };
     render();
 
     // Only real taps count: page scripts sometimes fire synthetic clicks.
-    toggle.addEventListener('click', function (e) {
+    // The heading and the Hide/Edit button on its right both fold the list away.
+    var onFold = function (e) {
       if (!e.isTrusted) return;
       panel.classList.toggle('open');
       render();
-    });
+    };
+    toggle.addEventListener('click', onFold);
+    fold.addEventListener('click', onFold);
     panel.addEventListener('click', function (e) {
       if (!e.isTrusted) return;
       var row = e.target.closest('.nj-row');
