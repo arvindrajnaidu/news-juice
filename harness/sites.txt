@@ -11,3 +11,9 @@ https://apnews.com/world-news
 https://www.npr.org/sections/world/
 https://arstechnica.com/
 https://www.theverge.com/tech
+https://edition.cnn.com/world
+https://www.reuters.com/world/
+https://www.nytimes.com/section/world
+https://www.washingtonpost.com/world/
+https://www.aljazeera.com/news/
+https://www.indiatoday.in/india

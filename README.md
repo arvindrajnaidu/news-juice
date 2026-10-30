@@ -48,3 +48,5 @@ npm run ios     # same, then opens Xcode
 `lift/` stays the only copy of the lift code: `npm run sync` bundles it, so re-run it after editing `lift/*.js`.
 
 In Debug builds, `xcrun simctl launch booted com.buzzie.newslens -NJOpenURL https://...` opens a page straight away. Each lift logs its stats (`NewsJuice lift {...}`) to the console.
+
+The app icon is drawn in `app/resources/icon.svg`; `swift app/scripts/render-icon.swift` renders it into the asset catalog.

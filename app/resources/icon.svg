@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- News Lens app icon: a lens over lines of text. Outside the lens the lines are
+       faded and ragged (the cluttered page); inside they are bold and even (the lift).
+       Square, opaque, no text: iOS applies the rounded mask. Render with
+       app/scripts/render-icon.swift. -->
+  <defs>
+    <clipPath id="lens">
+      <circle cx="452" cy="452" r="262"/>
+    </clipPath>
+  </defs>
+
+  <rect width="1024" height="1024" fill="#fbf8f2"/>
+
+  <!-- the page: faded, uneven lines -->
+  <g fill="#d8d0c2">
+    <rect x="96"  y="150" width="690" height="34" rx="17"/>
+    <rect x="96"  y="234" width="520" height="34" rx="17"/>
+    <rect x="660" y="234" width="250" height="34" rx="17"/>
+    <rect x="96"  y="318" width="830" height="34" rx="17"/>
+    <rect x="96"  y="402" width="300" height="34" rx="17"/>
+    <rect x="440" y="402" width="480" height="34" rx="17"/>
+    <rect x="96"  y="486" width="760" height="34" rx="17"/>
+    <rect x="96"  y="570" width="610" height="34" rx="17"/>
+    <rect x="96"  y="654" width="420" height="34" rx="17"/>
+    <rect x="560" y="654" width="360" height="34" rx="17"/>
+    <rect x="96"  y="738" width="700" height="34" rx="17"/>
+    <rect x="96"  y="822" width="480" height="34" rx="17"/>
+  </g>
+
+  <!-- inside the lens: clean paper and bold, even lines -->
+  <g clip-path="url(#lens)">
+    <rect x="150" y="150" width="604" height="604" fill="#fbf8f2"/>
+    <g fill="#1d1b18">
+      <rect x="282" y="334" width="340" height="38" rx="19"/>
+      <rect x="282" y="404" width="340" height="38" rx="19"/>
+      <rect x="282" y="474" width="340" height="38" rx="19"/>
+      <rect x="282" y="544" width="230" height="38" rx="19"/>
+    </g>
+  </g>
+
+  <!-- lens ring and amber handle -->
+  <line x1="652" y1="652" x2="878" y2="878" stroke="#e8a317" stroke-width="84" stroke-linecap="round"/>
+  <circle cx="452" cy="452" r="262" fill="none" stroke="#1d1b18" stroke-width="44"/>
+</svg>
