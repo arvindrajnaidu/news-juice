@@ -55,6 +55,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
     private let startURL: URL
     private var webView: WKWebView!
     private let titleLabel = UILabel()
+    private let listButton = UIButton(type: .system)
     private let liftBar = UIView()
     private let liftLabel = UILabel()
     private let progress = UIProgressView(progressViewStyle: .bar)
@@ -89,8 +90,11 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
             config.userContentController.addUserScript(
                 WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         }
-        // reader.js saves a site's recipe (the text groups to keep) through this handler.
-        config.userContentController.add(RecipeHandler(), name: "newsJuice")
+        // reader.js saves a site's recipe (the text groups to keep) and reports the
+        // reader's state through this handler.
+        let handler = RecipeHandler()
+        handler.browser = self
+        config.userContentController.add(handler, name: "newsJuice")
         // Sites tailor their markup to the user agent; look like Mobile Safari.
         config.applicationNameForUserAgent = "Version/26.0 Mobile/15E148 Safari/604.1"
 
@@ -149,13 +153,22 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         titleLabel.textColor = .secondaryLabel
         titleLabel.textAlignment = .center
         titleLabel.text = startURL.host
-        for v in [close, titleLabel] as [UIView] {
+        // Folds the reader's list of text groups away (Hide) and back (Edit). Shown only
+        // while the reader is up; reader.js tells us whether its list is open.
+        listButton.addAction(UIAction { [weak self] _ in
+            self?.webView.evaluateJavaScript("window.NewsJuice && NewsJuice.togglePanel()")
+        }, for: .primaryActionTriggered)
+        listButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
+        listButton.isHidden = true
+        for v in [close, titleLabel, listButton] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             bar.addSubview(v)
         }
         NSLayoutConstraint.activate([
             close.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 16),
             close.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            listButton.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -16),
+            listButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: bar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             titleLabel.widthAnchor.constraint(lessThanOrEqualTo: bar.widthAnchor, constant: -160),
@@ -246,6 +259,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                obj["ok"] as? Bool == true {
                 self.readerUp = true
+                self.listButton.isHidden = false
                 self.updateLiftLabel()
             } else {
                 self.flash("Nothing to lift on this page")
@@ -256,7 +270,19 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
     private func dropReader() {
         // reader.js closes on Escape.
         webView.evaluateJavaScript("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))")
+        readerClosed()
+    }
+
+    /// reader.js: the list of text groups was opened or folded.
+    func panelChanged(open: Bool) {
+        listButton.setTitle(open ? "Hide" : "Edit", for: .normal)
+        listButton.isHidden = !readerUp
+    }
+
+    /// reader.js: the reader went away (its handle was tapped, or we dropped it).
+    func readerClosed() {
         readerUp = false
+        listButton.isHidden = true
         updateLiftLabel()
     }
 
@@ -272,8 +298,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         titleLabel.text = webView.url?.host
-        readerUp = false // a new page starts without the reader
-        updateLiftLabel()
+        readerClosed() // a new page starts without the reader
         #if DEBUG
         debugRunDone = false
         #endif
@@ -335,8 +360,10 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
 
 /// Stores each site's recipe (the style groups to keep in the reader) in UserDefaults,
 /// keyed by host without "www.", so it applies to every page on that site.
+/// Also passes reader.js's panel and reader state on to the browser's top bar.
 final class RecipeHandler: NSObject, WKScriptMessageHandler {
     private static let key = "NJRecipes"
+    weak var browser: BrowserViewController?
 
     static func recipe(forHost host: String) -> [String]? {
         let all = UserDefaults.standard.dictionary(forKey: key) as? [String: [String]]
@@ -348,7 +375,18 @@ final class RecipeHandler: NSObject, WKScriptMessageHandler {
     }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let body = message.body as? [String: Any], body["type"] as? String == "saveRecipe",
+        guard let body = message.body as? [String: Any] else { return }
+        switch body["type"] as? String {
+        case "panel":
+            browser?.panelChanged(open: body["open"] as? Bool ?? false)
+            return
+        case "readerClosed":
+            browser?.readerClosed()
+            return
+        default:
+            break
+        }
+        guard body["type"] as? String == "saveRecipe",
               let host = body["host"] as? String, let keep = body["keep"] as? [String] else { return }
         var all = UserDefaults.standard.dictionary(forKey: Self.key) as? [String: [String]] ?? [:]
         all[Self.normalize(host)] = keep
