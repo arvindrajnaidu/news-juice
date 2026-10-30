@@ -4,7 +4,8 @@
   "scripts": {
     "copy-lift": "node scripts/copy-lift.mjs",
     "sync": "npm run copy-lift && cap sync ios",
-    "ios": "npm run sync && cap open ios"
+    "ios": "npm run sync && cap open ios",
+    "testflight": "bash scripts/testflight.sh"
   },
   "dependencies": {
     "@capacitor/core": "^8.3.4",
