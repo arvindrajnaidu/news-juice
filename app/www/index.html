@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>News Juice</title>
+<style>
+  :root { color-scheme: light dark; --bg: #fbf8f2; --fg: #1d1b18; --muted: #7a7368; --line: #ddd6ca; --accent: #e8a317; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1a1916; --fg: #e8e3da; --muted: #9a9387; --line: #3a372f; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.4 -apple-system, system-ui, sans-serif;
+         padding: calc(env(safe-area-inset-top) + 24px) 16px 24px; }
+  h1 { font: 700 28px Georgia, serif; margin: 0 0 4px; }
+  p.sub { color: var(--muted); margin: 0 0 20px; }
+  form { display: flex; gap: 8px; }
+  input { flex: 1; min-width: 0; font-size: 17px; padding: 12px; border-radius: 10px; border: 1px solid var(--line);
+          background: transparent; color: inherit; }
+  button { font-size: 17px; font-weight: 600; padding: 12px 18px; border: 0; border-radius: 10px; background: var(--accent); color: #000; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 28px 0 8px; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li a { display: block; padding: 12px 0; border-bottom: 1px solid var(--line); color: inherit; text-decoration: none; }
+</style>
+</head>
+<body>
+<h1>News Juice</h1>
+<p class="sub">Open a news page, then swipe the bar at the bottom up to lift the article.</p>
+<form id="go">
+  <input id="url" type="url" inputmode="url" autocapitalize="off" autocorrect="off" placeholder="ndtv.com or any article URL">
+  <button>Go</button>
+</form>
+<h2>Try</h2>
+<ul id="sites">
+  <li><a href="https://www.ndtv.com/india">NDTV India</a></li>
+  <li><a href="https://www.thehindu.com/news/national/">The Hindu</a></li>
+  <li><a href="https://indianexpress.com/section/india/">Indian Express</a></li>
+  <li><a href="https://www.theguardian.com/world">The Guardian</a></li>
+  <li><a href="https://apnews.com/world-news">AP News</a></li>
+</ul>
+<script>
+  function openURL(url) {
+    url = url.trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    // No bundler here, so call the native bridge directly instead of registerPlugin().
+    var cap = window.Capacitor;
+    if (cap && cap.isNativePlatform && cap.isNativePlatform()) {
+      cap.nativePromise('NewsJuiceBrowser', 'open', { url: url }).catch(function (e) { alert(e.message || e); });
+    } else {
+      location.href = url; // plain desktop browser, for poking at the page
+    }
+  }
+  document.getElementById('go').addEventListener('submit', function (e) {
+    e.preventDefault();
+    openURL(document.getElementById('url').value);
+  });
+  document.getElementById('sites').addEventListener('click', function (e) {
+    var a = e.target.closest('a');
+    if (!a) return;
+    e.preventDefault();
+    openURL(a.href);
+  });
+</script>
+</body>
+</html>
