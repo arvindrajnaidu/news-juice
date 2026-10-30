@@ -1,0 +1,13 @@
+# One URL per line. Homepages are fine: the harness opens the first article link.
+https://www.ndtv.com/india
+https://www.ndtv.com/world-news
+https://www.thehindu.com/news/national/
+https://indianexpress.com/section/india/
+https://www.hindustantimes.com/india-news
+https://timesofindia.indiatimes.com/india
+https://www.theguardian.com/world
+https://www.bbc.com/news/world
+https://apnews.com/world-news
+https://www.npr.org/sections/world/
+https://arstechnica.com/
+https://www.theverge.com/tech
