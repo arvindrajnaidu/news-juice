@@ -10,7 +10,7 @@
 #   ASC_TEAM_ID    Apple Developer team id (Buzzie LLC)
 #   BUILD_NUMBER   CFBundleVersion (default: timestamp, unique per upload)
 #
-# One-time prereq: an app with bundle id com.buzzie.newsjuice exists in App Store
+# One-time prereq: an app with bundle id com.nerdylotus.glance exists in App Store
 # Connect (Apple's API can't create app records). The key needs Admin access so
 # cloud signing can create the iOS Distribution certificate if it's missing.
 set -euo pipefail

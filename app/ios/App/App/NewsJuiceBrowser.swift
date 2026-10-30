@@ -19,7 +19,7 @@ class MainViewController: CAPBridgeViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         #if DEBUG
-        // `xcrun simctl launch <device> com.buzzie.newsjuice -NJOpenURL https://...`
+        // `xcrun simctl launch <device> com.nerdylotus.glance -NJOpenURL https://...`
         // opens a page straight away, for testing.
         if let url = UserDefaults.standard.string(forKey: "NJOpenURL").flatMap(URL.init(string:)),
            presentedViewController == nil {

@@ -37,7 +37,7 @@ npm run lift:test     # opens every site in harness/sites.txt in a phone-sized b
 
 ## iOS app (step 2)
 
-`app/` is a Capacitor 8 iOS app (bundle id `com.buzzie.newsjuice`). Capacitor's web view only hosts the start screen (`app/www/index.html`: a URL field and a few sites to try). Pages open in a separate native `WKWebView` (`app/ios/App/App/NewsJuiceBrowser.swift`) that injects `lift/lift.js` and `lift/reader.js` into every page at document end. Swipe the bar at the bottom up (or tap it) to lift; swipe it down to get the page back.
+`app/` is a Capacitor 8 iOS app (bundle id `com.nerdylotus.glance`). Capacitor's web view only hosts the start screen (`app/www/index.html`: a URL field and a few sites to try). Pages open in a separate native `WKWebView` (`app/ios/App/App/NewsJuiceBrowser.swift`) that injects `lift/lift.js` and `lift/reader.js` into every page at document end. Swipe the bar at the bottom up (or tap it) to lift; swipe it down to get the page back.
 
 ```bash
 cd app
@@ -48,4 +48,4 @@ npm run ios     # same, then opens Xcode
 
 `lift/` stays the only copy of the lift code: `npm run sync` bundles it, so re-run it after editing `lift/*.js`.
 
-In Debug builds, `xcrun simctl launch booted com.buzzie.newsjuice -NJOpenURL https://...` opens a page straight away. Each lift logs its stats (`NewsJuice lift {...}`) to the console.
+In Debug builds, `xcrun simctl launch booted com.nerdylotus.glance -NJOpenURL https://...` opens a page straight away. Each lift logs its stats (`NewsJuice lift {...}`) to the console.
