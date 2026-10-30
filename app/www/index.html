@@ -9,7 +9,10 @@
   @media (prefers-color-scheme: dark) { :root { --bg: #1a1916; --fg: #e8e3da; --muted: #9a9387; --line: #3a372f; } }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.4 -apple-system, system-ui, sans-serif;
-         padding: calc(env(safe-area-inset-top) + 24px) 16px 24px; }
+         padding: calc(env(safe-area-inset-top) + 24px) 16px calc(env(safe-area-inset-bottom) + 24px); }
+  /* Solid strip behind the status bar so the list scrolls under it, not through it. */
+  body::before { content: ""; position: fixed; top: 0; left: 0; right: 0; height: env(safe-area-inset-top);
+                 background: var(--bg); z-index: 1; }
   h1 { font: 700 28px Georgia, serif; margin: 0 0 4px; }
   p.sub { color: var(--muted); margin: 0 0 20px; }
   form { display: flex; gap: 8px; }
