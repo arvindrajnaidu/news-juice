@@ -72,7 +72,10 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
     private var readerView: WKWebView!
     private var mode = Mode.page
 
+    private let backButton = UIButton(type: .system)
     private let pageButton = UIButton(type: .system)
+    private var canGoBackObservation: NSKeyValueObservation?
+    private var lastCounts = (lifted: 0, kinds: 0)
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let homeButton = UIButton(type: .system)
@@ -148,6 +151,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         let edge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(readerEdgeSwipe(_:)))
         edge.edges = .left
         readerView.addGestureRecognizer(edge)
+        readerView.scrollView.panGestureRecognizer.require(toFail: edge)
 
         let topBar = makeTopBar()
         makeLiftButton()
@@ -206,69 +210,84 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
             self?.progress.setProgress(Float(wv.estimatedProgress), animated: true)
             self?.progress.isHidden = wv.estimatedProgress >= 1
         }
+        canGoBackObservation = webView.observe(\.canGoBack) { [weak self] _, _ in
+            guard let self else { return }
+            self.updateBar(lifted: self.lastCounts.lifted, kinds: self.lastCounts.kinds)
+        }
         updateBar(lifted: 0, kinds: 0)
         webView.load(URLRequest(url: startURL))
     }
 
-    /// Site name with what you're looking at underneath; "‹ Page" at left while lifted;
-    /// Home on the page, Change while reading.
+    /// Back chevron at left (whenever there's a previous page), the site name and what
+    /// you're looking at in the middle, and on the right Home on the page, the original-
+    /// page globe while picking, the globe and the Change-lift sliders while reading.
     private func makeTopBar() -> UIView {
         let bar = UIView()
         bar.backgroundColor = Self.bar
         let rule = UIView()
         rule.backgroundColor = UIColor.separator
 
-        var page = UIButton.Configuration.plain()
-        page.image = UIImage(systemName: "chevron.backward",
-                             withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold))
-        page.title = "Page"
-        page.imagePadding = 2
-        page.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 6)
-        pageButton.configuration = page
-        pageButton.addAction(UIAction { [weak self] _ in self?.toPage() }, for: .primaryActionTriggered)
+        var back = UIButton.Configuration.plain()
+        back.image = UIImage(systemName: "chevron.backward",
+                             withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .semibold))
+        back.contentInsets = .zero
+        backButton.configuration = back
+        backButton.accessibilityLabel = "Back"
+        backButton.addAction(UIAction { [weak self] _ in self?.goBack() }, for: .primaryActionTriggered)
 
         titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         titleLabel.text = startURL.host
+        titleLabel.textAlignment = .center
         subtitleLabel.font = .systemFont(ofSize: 12)
         subtitleLabel.textColor = .secondaryLabel
+        subtitleLabel.textAlignment = .center
         let titles = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
         titles.axis = .vertical
-        let left = UIStackView(arrangedSubviews: [pageButton, titles])
-        left.alignment = .center
-        left.spacing = 4
+        titles.alignment = .center
 
-        homeButton.configuration = .plain()
-        homeButton.setTitle("Home", for: .normal)
-        homeButton.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true) }, for: .primaryActionTriggered)
-
-        var change = UIButton.Configuration.filled()
-        change.title = "Change"
-        change.baseBackgroundColor = .systemBackground
-        change.baseForegroundColor = .label
-        change.cornerStyle = .capsule
-        change.background.strokeColor = UIColor(red: 0.79, green: 0.76, blue: 0.71, alpha: 1)
-        change.background.strokeWidth = 1
-        change.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
-            var a = $0; a.font = .systemFont(ofSize: 15, weight: .semibold); return a
+        let textButton = { (button: UIButton, title: String, action: @escaping () -> Void) in
+            var c = UIButton.Configuration.plain()
+            c.title = title
+            c.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6)
+            c.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
+                var a = $0; a.font = .systemFont(ofSize: 16, weight: .semibold); return a
+            }
+            button.configuration = c
+            button.addAction(UIAction { _ in action() }, for: .primaryActionTriggered)
         }
-        changeButton.configuration = change
-        changeButton.addAction(UIAction { [weak self] _ in
+        let iconButton = { (button: UIButton, symbol: String, label: String, action: @escaping () -> Void) in
+            var c = UIButton.Configuration.plain()
+            c.image = UIImage(systemName: symbol,
+                              withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .semibold))
+            c.contentInsets = .zero
+            button.configuration = c
+            button.accessibilityLabel = label
+            button.addAction(UIAction { _ in action() }, for: .primaryActionTriggered)
+            button.widthAnchor.constraint(equalToConstant: 44).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        }
+        iconButton(pageButton, "globe", "Show original page") { [weak self] in self?.toPage() }
+        iconButton(changeButton, "slider.horizontal.3", "Change lift") { [weak self] in
             self?.readerView.evaluateJavaScript("window.NewsJuice && NewsJuice.setMode('pick')")
-        }, for: .primaryActionTriggered)
+        }
+        textButton(homeButton, "Home") { [weak self] in self?.dismiss(animated: true) }
+        let right = UIStackView(arrangedSubviews: [pageButton, changeButton, homeButton])
+        right.spacing = 0
 
-        for v in [left, homeButton, changeButton, rule] as [UIView] {
+        for v in [backButton, titles, right, rule] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             bar.addSubview(v)
         }
         NSLayoutConstraint.activate([
-            left.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 16),
-            left.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            left.trailingAnchor.constraint(lessThanOrEqualTo: changeButton.leadingAnchor, constant: -8),
-            homeButton.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -8),
-            homeButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            changeButton.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -12),
-            changeButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            changeButton.heightAnchor.constraint(equalToConstant: 38),
+            backButton.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 4),
+            backButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            backButton.widthAnchor.constraint(equalToConstant: 44),
+            backButton.heightAnchor.constraint(equalToConstant: 44),
+            titles.centerXAnchor.constraint(equalTo: bar.centerXAnchor),
+            titles.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            titles.widthAnchor.constraint(lessThanOrEqualTo: bar.widthAnchor, constant: -200),
+            right.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -8),
+            right.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             rule.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
             rule.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
             rule.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
@@ -296,6 +315,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
 
     /// Shows what the top bar should for the current mode.
     private func updateBar(lifted: Int, kinds: Int) {
+        lastCounts = (lifted, kinds)
+        backButton.isHidden = !webView.canGoBack
         pageButton.isHidden = mode == .page
         homeButton.isHidden = mode != .page
         changeButton.isHidden = mode != .read
@@ -397,8 +418,14 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
     }
 
     @objc private func readerEdgeSwipe(_ gesture: UIScreenEdgePanGestureRecognizer) {
-        guard gesture.state == .recognized, webView.canGoBack else { return }
-        liftOnLoad = siteHasRecipe
+        guard gesture.state == .recognized else { return }
+        goBack()
+    }
+
+    /// The previous page; from the reader it opens lifted again, behind the reader.
+    private func goBack() {
+        guard webView.canGoBack else { return }
+        if mode != .page { liftOnLoad = siteHasRecipe }
         webView.goBack()
     }
 
