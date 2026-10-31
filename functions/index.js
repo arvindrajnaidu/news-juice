@@ -72,6 +72,8 @@ exports.speak = onRequest(
     });
     if (!reply.ok) {
       logger.error('OpenAI speech failed', reply.status, await reply.text());
+      // Nothing was read, so give the allowance back.
+      await ref.set({ chars: admin.firestore.FieldValue.increment(-text.length) }, { merge: true });
       return res.status(502).json({ error: 'voice' });
     }
     res.set('Content-Type', 'audio/mpeg');
