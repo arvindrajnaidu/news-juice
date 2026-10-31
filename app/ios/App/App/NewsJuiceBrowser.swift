@@ -63,7 +63,7 @@ public class NewsJuiceBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 }
 
-final class BrowserViewController: UIViewController, WKNavigationDelegate {
+final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
     private enum Mode { case page, pick, read }
 
     private let startURL: URL
@@ -119,6 +119,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
 
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
+        // Sign-in buttons (Sign in with Google and the like) open their window from script.
+        config.preferences.javaScriptCanOpenWindowsAutomatically = true
         if let file = Bundle.main.url(forResource: "lift", withExtension: "js", subdirectory: "public/lift"),
            let source = try? String(contentsOf: file, encoding: .utf8) {
             config.userContentController.addUserScript(
@@ -131,6 +133,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
 
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         #if DEBUG
         if #available(iOS 16.4, *) { webView.isInspectable = true }
@@ -549,6 +552,100 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
             if let url = action.request.url { UIApplication.shared.open(url) }
             decisionHandler(.cancel)
         }
+    }
+
+    // MARK: WKUIDelegate
+
+    /// A new window. A link with target=_blank just opens here; a window opened from
+    /// script (a sign-in popup) gets a sheet of its own, built on the configuration
+    /// WebKit hands over so the page that opened it can still talk to it.
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if action.navigationType == .linkActivated {
+            webView.load(action.request)
+            return nil
+        }
+        let popup = WKWebView(frame: .zero, configuration: configuration)
+        popup.navigationDelegate = self
+        popup.uiDelegate = self
+        let sheet = PopupViewController(webView: popup)
+        (presentedViewController ?? self).present(sheet, animated: true)
+        return popup
+    }
+
+    /// The popup closed itself (window.close(), as sign-in windows do when they're done).
+    func webViewDidClose(_ webView: WKWebView) {
+        guard webView !== self.webView else { return }
+        var top: UIViewController? = presentedViewController
+        while let vc = top {
+            if let popup = vc as? PopupViewController, popup.webView === webView {
+                popup.presentingViewController?.dismiss(animated: true)
+                return
+            }
+            top = vc.presentedViewController
+        }
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+        let alert = UIAlertController(title: frame.request.url?.host, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in completionHandler() })
+        topmost.present(alert, animated: true)
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        let alert = UIAlertController(title: frame.request.url?.host, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in completionHandler(false) })
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in completionHandler(true) })
+        topmost.present(alert, animated: true)
+    }
+
+    private var topmost: UIViewController {
+        var vc: UIViewController = self
+        while let next = vc.presentedViewController { vc = next }
+        return vc
+    }
+}
+
+/// A window a page opened from script, such as a sign-in popup, shown as a sheet
+/// with a Done button.
+final class PopupViewController: UIViewController {
+    let webView: WKWebView
+    private var titleObservation: NSKeyValueObservation?
+
+    init(webView: WKWebView) {
+        self.webView = webView
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+        let bar = UINavigationBar()
+        let item = UINavigationItem()
+        item.rightBarButtonItem = UIBarButtonItem(systemItem: .done, primaryAction: UIAction { [weak self] _ in
+            self?.dismiss(animated: true)
+        })
+        bar.items = [item]
+        titleObservation = webView.observe(\.url, options: [.initial, .new]) { web, _ in
+            item.title = web.url?.host
+        }
+        for v in [bar, webView] as [UIView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(v)
+        }
+        NSLayoutConstraint.activate([
+            bar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            bar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            webView.topAnchor.constraint(equalTo: bar.bottomAnchor),
+            webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
     }
 }
 
