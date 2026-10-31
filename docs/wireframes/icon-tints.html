@@ -1,0 +1,35 @@
+<!doctype html><meta charset="utf-8"><title>Top bar icon tints</title>
+<style>
+body{margin:0;padding:20px;background:#e9e5dd;font:14px -apple-system,system-ui,sans-serif;color:#1d1b18}
+h1{font:700 20px Georgia,serif;margin:0 0 14px}
+.opt{margin:0 0 14px;width:402px}
+.opt p{margin:0 0 6px;font-size:13px}.opt b{font-size:14px}
+.bar{height:52px;display:flex;align-items:center;background:#f3efe6;border:1px solid #e0d9cc;border-radius:10px;padding:0 6px;position:relative}
+.ico{width:44px;height:44px;display:grid;place-items:center}
+.mid{position:absolute;left:0;right:0;text-align:center;pointer-events:none;line-height:1.2}
+.mid b{display:block;font-size:15px}.mid span{font-size:12px;color:#7a7368}
+.r{margin-left:auto;display:flex}
+svg{width:24px;height:24px;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+</style>
+<h1>Top bar icon tint options</h1>
+<div id="opts"></div>
+<script>
+var icons={
+ back:'<path d="M15 5l-7 7 7 7"/>',
+ globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/>',
+ sliders:'<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>'
+};
+var opts=[
+ ['A · Ink','#1d1b18','Same deep ink as the text. Calm and native-feeling; relies on shape, not colour.'],
+ ['B · Warm grey','#6b6458','Softer, recedes behind the article; slightly lower contrast.'],
+ ['C · Dark amber','#a8700a','Ties controls to the amber Lift button; warm and branded, still readable.'],
+ ['D · Ink + amber active','#1d1b18','Ink icons, with the one for the current view in amber (e.g. sliders while picking).'],
+ ['E · Blue (current)','#0a66d8','For comparison.'],
+];
+document.getElementById('opts').innerHTML=opts.map(function(o){
+ var c=o[1];var sl=o[0][0]==='D'?'#c88a0c':c;
+ var i=function(n,col){return '<div class="ico"><svg viewBox="0 0 24 24" stroke="'+col+'">'+icons[n]+'</svg></div>'};
+ return '<div class="opt"><p><b>'+o[0]+'</b> — '+o[2]+'</p><div class="bar">'+i('back',c)+
+ '<div class="mid"><b>apnews.com</b><span>Lifted · saved for this site</span></div><div class="r">'+i('globe',c)+i('sliders',sl)+'</div></div></div>';
+}).join('');
+</script>
