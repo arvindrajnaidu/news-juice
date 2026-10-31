@@ -1,0 +1,7 @@
+{
+	"appId": "com.buzzie.newslens",
+	"appName": "News Lens",
+	"webDir": "www",
+	"backgroundColor": "#fbf8f2",
+	"packageClassList": []
+}

@@ -1,0 +1,69 @@
+{
+  "v": 1,
+  "updated": "2026-10-31",
+  "sites": {
+    "apnews.com": {
+      "keep": [
+        "16px ap",
+        "18px bold ap links",
+        "20px bold ap links",
+        "14px ap links",
+        "16px ap links"
+      ]
+    },
+    "cricinfo.com": {
+      "keep": [
+        "20px bold inter links",
+        "24px bold inter links",
+        "14px inter",
+        "16px inter",
+        "24px bold inter"
+      ]
+    },
+    "edition.cnn.com": {
+      "keep": [
+        "18px noto_serif",
+        "16px cnn_sans_display links",
+        "18px cnn_sans_display links",
+        "20px cnn_sans_display links"
+      ]
+    },
+    "indianexpress.com": {
+      "keep": [
+        "16px bold roboto links",
+        "18px bold roboto links",
+        "17px pt serif",
+        "18px pt serif",
+        "24px bold pt serif"
+      ]
+    },
+    "ndtv.com": {
+      "keep": [
+        "16px bold montserrat links",
+        "18px inter",
+        "18px bold inter links",
+        "14px inter"
+      ]
+    },
+    "theguardian.com": {
+      "keep": [
+        "17px guardiantextegyptian",
+        "34px gh guardian headline",
+        "17px gh guardian headline",
+        "28px gh guardian headline",
+        "17px gh guardian headline links"
+      ]
+    },
+    "thehindu.com": {
+      "keep": [
+        "12px merriweather",
+        "16px merriweather links",
+        "14px merriweather sans links",
+        "14px merriweather links",
+        "8px merriweather links",
+        "22px merriweather links",
+        "14px bold merriweather sans links"
+      ]
+    }
+  }
+}
