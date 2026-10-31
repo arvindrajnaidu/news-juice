@@ -219,8 +219,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
     }
 
     /// Back chevron at left (whenever there's a previous page), the site name and what
-    /// you're looking at in the middle, and on the right Home on the page, the original-
-    /// page globe while picking, the globe and the Change-lift sliders while reading.
+    /// you're looking at in the middle, and icons on the right: Home on the page, the
+    /// original-page globe while picking, the globe and the Change-lift sliders while reading.
     private func makeTopBar() -> UIView {
         let bar = UIView()
         bar.backgroundColor = Self.bar
@@ -245,16 +245,6 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         titles.axis = .vertical
         titles.alignment = .center
 
-        let textButton = { (button: UIButton, title: String, action: @escaping () -> Void) in
-            var c = UIButton.Configuration.plain()
-            c.title = title
-            c.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 6, bottom: 0, trailing: 6)
-            c.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
-                var a = $0; a.font = .systemFont(ofSize: 16, weight: .semibold); return a
-            }
-            button.configuration = c
-            button.addAction(UIAction { _ in action() }, for: .primaryActionTriggered)
-        }
         let iconButton = { (button: UIButton, symbol: String, label: String, action: @escaping () -> Void) in
             var c = UIButton.Configuration.plain()
             c.image = UIImage(systemName: symbol,
@@ -270,7 +260,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         iconButton(changeButton, "slider.horizontal.3", "Change lift") { [weak self] in
             self?.readerView.evaluateJavaScript("window.NewsJuice && NewsJuice.setMode('pick')")
         }
-        textButton(homeButton, "Home") { [weak self] in self?.dismiss(animated: true) }
+        iconButton(homeButton, "house", "Home") { [weak self] in self?.dismiss(animated: true) }
         let right = UIStackView(arrangedSubviews: [pageButton, changeButton, homeButton])
         right.spacing = 0
 
