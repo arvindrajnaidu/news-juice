@@ -263,7 +263,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
             button.heightAnchor.constraint(equalToConstant: 44).isActive = true
         }
         iconButton(pageButton, "globe", "Show original page") { [weak self] in self?.toPage() }
-        iconButton(changeButton, "slider.horizontal.3", "Change lift") { [weak self] in
+        iconButton(changeButton, "slider.horizontal.3", "Change filter") { [weak self] in
             self?.readerView.evaluateJavaScript("window.NewsJuice && NewsJuice.setMode('pick')")
         }
         iconButton(homeButton, "house", "Home") { [weak self] in self?.dismiss(animated: true) }
@@ -292,11 +292,11 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         return bar
     }
 
-    /// The full-width amber Lift button in the bar under the page.
+    /// The full-width amber Filter button in the bar under the page.
     private func makeLiftButton() {
         var c = UIButton.Configuration.filled()
-        c.title = "Lift"
-        c.image = UIImage(systemName: "magnifyingglass",
+        c.title = "Filter"
+        c.image = UIImage(systemName: "line.3.horizontal.decrease",
                           withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .bold))
         c.imagePadding = 8
         c.baseBackgroundColor = Self.accent
@@ -318,8 +318,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         changeButton.isHidden = mode != .read
         switch mode {
         case .page: subtitleLabel.text = "Original page"
-        case .pick: subtitleLabel.text = "\(lifted) of \(kinds) kinds lifted"
-        case .read: subtitleLabel.text = "Lifted · saved for this site"
+        case .pick: subtitleLabel.text = "\(lifted) of \(kinds) kinds kept"
+        case .read: subtitleLabel.text = "Filtered · saved for this site"
         }
     }
 
@@ -333,7 +333,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   obj["ok"] as? Bool == true else {
                 NSLog("NewsJuice lift failed: %@", String(describing: result))
-                self.flash("Nothing to lift on this page")
+                self.flash("Nothing to filter on this page")
                 return
             }
             let groups = obj["groups"] as? [[String: Any]] ?? []
@@ -449,7 +449,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
     private func flash(_ text: String) {
         liftButton.configuration?.title = text
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            self?.liftButton.configuration?.title = "Lift"
+            self?.liftButton.configuration?.title = "Filter"
         }
     }
 

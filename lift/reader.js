@@ -257,7 +257,7 @@
       return '<button class="nj-card role-' + roleOf(g, sizes.base, sizes.headSize) + (on ? ' on' : '') + '" data-g="' + esc(g.id) +
         '" data-kind="' + esc(kind) + '" aria-pressed="' + on + '" style="' + esc(vars) + '">' +
         '<span class="nj-sample">' + esc(g.sample) + '</span>' +
-        '<span class="nj-badge">' + (on ? 'Lifted · ' : '') + esc(kind) + ' · ' + g.count + '</span></button>';
+        '<span class="nj-badge">' + (on ? 'Kept · ' : '') + esc(kind) + ' · ' + g.count + '</span></button>';
     }).join('');
   }
 
@@ -265,7 +265,7 @@
   function renderHTML(r) {
     var keep = loadRecipe(r) || defaultKeep(r);
     return '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
-      '<title>' + esc(r.title || 'Lifted') + '</title><style>' + CSS.replace(/\.nj-sheet\{position:fixed;inset:0;/, '.nj-sheet{') +
+      '<title>' + esc(r.title || 'Filtered') + '</title><style>' + CSS.replace(/\.nj-sheet\{position:fixed;inset:0;/, '.nj-sheet{') +
       '</style><div class="nj-sheet read"><div class="nj-article">' + articleHTML(r, keep) + '</div></div>';
   }
 
@@ -384,7 +384,7 @@
       var on = i < 0;
       card.classList.toggle('on', on);
       card.setAttribute('aria-pressed', on);
-      card.querySelector('.nj-badge').textContent = (on ? 'Lifted · ' : '') + card.getAttribute('data-kind') + ' · ' + groups[id].count;
+      card.querySelector('.nj-badge').textContent = (on ? 'Kept · ' : '') + card.getAttribute('data-kind') + ' · ' + groups[id].count;
       updateButton();
       report();
     });
