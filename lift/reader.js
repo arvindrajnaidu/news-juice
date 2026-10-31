@@ -28,6 +28,9 @@
     '.nj-intro{margin:0;padding:14px 16px 8px;font-size:13px;color:#4a453d;overflow:hidden;max-height:60px;',
     '  transition:max-height .4s ease,opacity .3s ease,padding .4s ease}',
     '.read .nj-intro{max-height:0;opacity:0;padding:0 16px}',
+    '.nj-reset{display:block;margin:0 16px 4px;padding:6px 0;border:0;background:none;',
+    'font:600 14px -apple-system,system-ui,sans-serif;color:#6b6458}',
+    '.nj-reset[hidden],.read .nj-reset{display:none}',
     '.nj-list{display:flex;flex-direction:column;padding:6px 14px 0;transition:padding .45s ease}',
     '.read .nj-list{padding:22px 24px 0}',
     '.nj-card{display:flex;flex-direction:column;align-items:flex-start;gap:6px;width:100%;box-sizing:border-box;',
@@ -77,7 +80,7 @@
     '.nj-article .src{font:13px -apple-system,system-ui,sans-serif;color:#7a7368;word-break:break-all;margin-top:2em}',
     '@media (prefers-color-scheme:dark){.nj-sheet{background:#22201c;color:#e8e3da}.nj-sheet.read{background:#1a1916}',
     '  .nj-card{color:#e8e3da;background:rgba(255,255,255,.06)}.nj-card.on{background:#2e2b26}',
-    '  .read .nj-sample{color:#e8e3da}.nj-intro{color:#b3ab9f}.nj-badge{background:#3a372f;color:#cfc8bb}}',
+    '  .read .nj-sample{color:#e8e3da}.nj-intro{color:#b3ab9f}.nj-reset{color:#b3ab9f}.nj-badge{background:#3a372f;color:#cfc8bb}}',
   ].join('\n');
 
   var STORE_PREFIX = 'newsjuice:recipe:';
@@ -121,21 +124,45 @@
     return present;
   }
 
-  // The saved groups that are on this page, or null if none are.
-  function loadRecipe(r, given) {
-    var recipe = storedRecipe(r, given);
+  // A saved group's id on this page: the same signature, or the same one a pixel
+  // bigger or smaller (sites nudge their type sizes now and then).
+  function matchId(id, present) {
+    if (present[id]) return id;
+    var m = /^(\d+)px(.*)$/.exec(id);
+    if (!m) return null;
+    var up = (+m[1] + 1) + 'px' + m[2], down = (+m[1] - 1) + 'px' + m[2];
+    return present[up] ? up : present[down] ? down : null;
+  }
+
+  // The groups of a recipe that are on this page, or null if none are.
+  function matchRecipe(r, recipe) {
     if (!recipe) return null;
-    var present = onPage(r);
-    var keep = recipe.filter(function (id) { return present[id]; });
+    var present = onPage(r), keep = [];
+    recipe.forEach(function (id) {
+      var m = matchId(id, present);
+      if (m && keep.indexOf(m) < 0) keep.push(m);
+    });
     return keep.length ? keep : null;
   }
 
+  function loadRecipe(r, given) {
+    return matchRecipe(r, storedRecipe(r, given));
+  }
+
+  // keep null forgets the site's recipe.
   function saveRecipe(host, keep) {
     if (inApp()) {
       notifyApp({ type: 'saveRecipe', host: host, keep: keep });
       return;
     }
-    try { localStorage.setItem(STORE_PREFIX + host, JSON.stringify(keep)); } catch (e) { /* storage blocked */ }
+    try {
+      if (keep) localStorage.setItem(STORE_PREFIX + host, JSON.stringify(keep));
+      else localStorage.removeItem(STORE_PREFIX + host);
+    } catch (e) { /* storage blocked */ }
+  }
+
+  function sameSet(a, b) {
+    return a.length === b.length && a.every(function (id) { return b.indexOf(id) >= 0; });
   }
 
   function byId(r) {
@@ -273,27 +300,36 @@
     opts = opts || {};
     var old = document.getElementById('news-juice-reader');
     if (old) old.remove();
+    // The user's own recipe wins; otherwise a suggested one (from the filter server
+    // or bundled with the app), passed in by the app as opts.suggested.
     var saved = loadRecipe(r, opts.recipe);
+    var groups = byId(r);
+    var body = proseGroup(r);
+    // On an article, a recipe that only matches link lists here (the nav on an article
+    // can look just like the headlines on a section front) still needs the body text.
+    var repair = function (ids) {
+      if (!ids) return null;
+      var linkOnly = ids.every(function (id) { return groups[id] && groups[id].link; });
+      return r.article && linkOnly && body ? ids.concat(body.id) : ids;
+    };
+    saved = repair(saved);
+    var suggested = repair(matchRecipe(r, opts.suggested));
+    var source = saved ? 'own' : suggested ? 'suggested' : 'none';
     // A site's recipe covers all its page types (section fronts and articles style
     // their text differently), so saving keeps the groups that aren't on this page.
     var present = onPage(r);
-    var elsewhere = (storedRecipe(r, opts.recipe) || []).filter(function (id) { return !present[id]; });
-    var keep = saved || defaultKeep(r);
-    // On an article, a recipe that only matches link lists here (the nav on an article
-    // can look just like the headlines on a section front) still needs the body text.
-    var groups = byId(r);
-    var linkOnly = saved && saved.every(function (id) { return groups[id] && groups[id].link; });
-    var body = proseGroup(r);
-    if (r.article && linkOnly && body) keep = keep.concat(body.id);
-    // A site that's been lifted before reads straight away; a new site (or a new kind
-    // of page on it) starts by picking.
-    var mode = saved ? 'read' : 'pick';
+    var elsewhere = (storedRecipe(r, opts.recipe) || []).filter(function (id) { return !matchId(id, present); });
+    var keep = (saved || suggested || defaultKeep(r)).slice();
+    // A site with a recipe reads straight away; a new site (or a new kind of page on
+    // it) starts by picking.
+    var mode = saved || suggested ? 'read' : 'pick';
 
     var host = document.createElement('div');
     host.id = 'news-juice-reader';
     var root = host.attachShadow({ mode: 'open' });
     root.innerHTML = '<style>' + CSS + '</style><div class="nj-sheet ' + mode + '">' +
       '<p class="nj-intro">One sample of every kind of text on this page. Tap what you want to read; tap again to drop it.</p>' +
+      '<button class="nj-reset" hidden>Reset to suggested</button>' +
       '<div class="nj-list"></div><div class="nj-article hidden"></div><div class="nj-pad"></div>' +
       '<button class="nj-readbtn"></button></div>';
     document.documentElement.appendChild(host);
@@ -302,16 +338,18 @@
     var list = root.querySelector('.nj-list');
     var article = root.querySelector('.nj-article');
     var readBtn = root.querySelector('.nj-readbtn');
+    var resetBtn = root.querySelector('.nj-reset');
     var busy = false;
 
     var report = function () {
-      notifyApp({ type: 'mode', mode: mode, lifted: keep.length, kinds: r.groups.length });
+      notifyApp({ type: 'mode', mode: mode, lifted: keep.length, kinds: r.groups.length, source: source });
     };
     var updateButton = function () {
       readBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" ' +
         'stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="M15.5 15.5L21 21"></path></svg>' +
-        'Read ' + keep.length + ' lifted';
+        'Read ' + keep.length + ' kept';
       readBtn.disabled = !keep.length;
+      resetBtn.hidden = !suggested || sameSet(keep, suggested);
     };
     var showArticle = function () {
       article.innerHTML = articleHTML(r, keep);
@@ -335,7 +373,12 @@
       sheet.classList.remove('pick', 'nj-enter');
       sheet.classList.add('read');
       mode = 'read';
-      saveRecipe(r.host, elsewhere.concat(keep));
+      // Reading a suggestion as it is leaves nothing of the user's to save, so later
+      // updates to it still arrive; any change makes it their own.
+      if (source !== 'suggested' || !sameSet(keep, suggested)) {
+        saveRecipe(r.host, elsewhere.concat(keep));
+        source = 'own';
+      }
       report();
       setTimeout(function () {
         article.classList.add('fade');
@@ -389,6 +432,17 @@
       report();
     });
     readBtn.addEventListener('click', function (e) { if (e.isTrusted) toRead(); });
+    // Drops the user's own recipe for the site and goes back to the suggested one.
+    resetBtn.addEventListener('click', function (e) {
+      if (!e.isTrusted || mode !== 'pick' || !suggested) return;
+      keep = suggested.slice();
+      elsewhere = [];
+      source = 'suggested';
+      saveRecipe(r.host, null);
+      list.innerHTML = cardHTML(r, keep);
+      updateButton();
+      report();
+    });
 
     // Links go through the app, which opens the page and lifts it again when the
     // site has a recipe; in a plain browser they just navigate.

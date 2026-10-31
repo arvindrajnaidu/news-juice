@@ -92,6 +92,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
     private var liftedPages = Set<String>()
     /// Whether the start screen has been told which site this browser opened.
     private var siteReported = false
+    /// Where the reader's filter came from: "own", "suggested" or "none".
+    private var filterSource = "none"
 
     private static let bar = UIColor { $0.userInterfaceStyle == .dark
         ? UIColor(red: 0.13, green: 0.125, blue: 0.11, alpha: 1)
@@ -319,7 +321,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         switch mode {
         case .page: subtitleLabel.text = "Original page"
         case .pick: subtitleLabel.text = "\(lifted) of \(kinds) kinds kept"
-        case .read: subtitleLabel.text = "Filtered · saved for this site"
+        case .read: subtitleLabel.text = filterSource == "suggested" ? "Suggested filter" : "Filtered · saved for this site"
         }
     }
 
@@ -339,23 +341,30 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
             let groups = obj["groups"] as? [[String: Any]] ?? []
             NSLog("NewsJuice lift %@: %d groups, top %@", self.webView.url?.absoluteString ?? "",
                   groups.count, groups.prefix(4).compactMap { $0["id"] as? String }.joined(separator: " | "))
-            self.showReader(json)
+            guard let host = self.webView.url?.host else { self.showReader(json, suggested: nil); return }
+            SuggestedFilters.lookup(host: host, article: obj["article"] as? Bool) { [weak self] keep in
+                self?.showReader(json, suggested: keep)
+            }
         }
     }
 
     /// Hands a lift result to the reader view, then slides the site away to reveal it.
-    /// reader.js opens in Read for a site with a recipe and in Pick for a new one.
-    private func showReader(_ liftJSON: String, attempt: Int = 0) {
+    /// reader.js opens in Read for a site with a recipe (the user's own, or else a
+    /// suggested one) and in Pick for a new one.
+    private func showReader(_ liftJSON: String, suggested: [String]?, attempt: Int = 0) {
+        let json = { (list: [String]?) in
+            list.flatMap { try? JSONSerialization.data(withJSONObject: $0) }
+                .flatMap { String(data: $0, encoding: .utf8) } ?? "null"
+        }
         let recipe = webView.url?.host.flatMap(RecipeHandler.recipe(forHost:))
-        let recipeJSON = recipe.flatMap { try? JSONSerialization.data(withJSONObject: $0) }
-            .flatMap { String(data: $0, encoding: .utf8) } ?? "null"
-        let js = "window.NewsJuice ? (NewsJuice.showReader(\(liftJSON), { recipe: \(recipeJSON) }), true) : false"
+        let js = "window.NewsJuice ? (NewsJuice.showReader(\(liftJSON), " +
+            "{ recipe: \(json(recipe)), suggested: \(json(suggested)) }), true) : false"
         readerView.evaluateJavaScript(js) { [weak self] value, _ in
             guard let self else { return }
             guard value as? Bool == true else {
                 // The reader page is still loading (only possible right after opening).
                 if attempt < 10 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.showReader(liftJSON, attempt: attempt + 1) }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.showReader(liftJSON, suggested: suggested, attempt: attempt + 1) }
                 }
                 return
             }
@@ -401,15 +410,16 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
     }
 
     /// reader.js: it switched between Pick and Read (or the lifted count changed).
-    func readerMode(_ name: String, lifted: Int, kinds: Int) {
+    func readerMode(_ name: String, lifted: Int, kinds: Int, source: String) {
         mode = name == "read" ? .read : .pick
+        filterSource = source
         updateBar(lifted: lifted, kinds: kinds)
     }
 
     /// reader.js: a link in the reader was tapped. Open it, and if the site has a
     /// recipe, keep the reader up and lift the new page as soon as it loads.
     func openFromReader(_ url: URL) {
-        liftOnLoad = url.host.flatMap(RecipeHandler.recipe(forHost:)) != nil
+        liftOnLoad = url.host.map(Self.hasFilter) ?? false
         webView.load(URLRequest(url: url))
     }
 
@@ -443,7 +453,12 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
     }
 
     private var siteHasRecipe: Bool {
-        webView.url?.host.flatMap(RecipeHandler.recipe(forHost:)) != nil
+        webView.url?.host.map(Self.hasFilter) ?? false
+    }
+
+    /// Whether a site has a filter of the user's own or a suggested one on hand.
+    private static func hasFilter(_ host: String) -> Bool {
+        RecipeHandler.recipe(forHost: host) != nil || SuggestedFilters.hasAny(host: host)
     }
 
     private func flash(_ text: String) {
@@ -457,6 +472,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         titleLabel.text = webView.url?.host
+        SuggestedFilters.refreshIfStale()
         // A page opened from the reader stays behind the reader until it's lifted;
         // anything else shows the page.
         if !liftOnLoad && mode != .page { toPage(animated: false) }
@@ -554,7 +570,7 @@ final class RecipeHandler: NSObject, WKScriptMessageHandler {
         return all?[normalize(host)]
     }
 
-    private static func normalize(_ host: String) -> String {
+    static func normalize(_ host: String) -> String {
         host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 
@@ -563,7 +579,8 @@ final class RecipeHandler: NSObject, WKScriptMessageHandler {
         switch body["type"] as? String {
         case "mode":
             browser?.readerMode(body["mode"] as? String ?? "pick",
-                                lifted: body["lifted"] as? Int ?? 0, kinds: body["kinds"] as? Int ?? 0)
+                                lifted: body["lifted"] as? Int ?? 0, kinds: body["kinds"] as? Int ?? 0,
+                                source: body["source"] as? String ?? "none")
             return
         case "navigate":
             if let url = (body["url"] as? String).flatMap(URL.init(string:)) { browser?.openFromReader(url) }
@@ -571,11 +588,104 @@ final class RecipeHandler: NSObject, WKScriptMessageHandler {
         default:
             break
         }
-        guard body["type"] as? String == "saveRecipe",
-              let host = body["host"] as? String, let keep = body["keep"] as? [String] else { return }
+        guard body["type"] as? String == "saveRecipe", let host = body["host"] as? String else { return }
+        // No list: the user reset the site to its suggested filter.
+        guard let keep = body["keep"] as? [String] else {
+            Self.forget(host: host)
+            NSLog("NewsJuice recipe for %@ reset", host)
+            return
+        }
         var all = UserDefaults.standard.dictionary(forKey: Self.key) as? [String: [String]] ?? [:]
         all[Self.normalize(host)] = keep
         UserDefaults.standard.set(all, forKey: Self.key)
         NSLog("NewsJuice recipe for %@: %@", host, keep.joined(separator: " | "))
+    }
+}
+
+/// Suggested filters: one filters.json that Arvind keeps (a public gist; see docs/filters.md),
+/// fetched at most once a day with If-None-Match and kept for offline use, with a copy
+/// bundled in the app for first launch. The user's own filter (RecipeHandler) always wins.
+enum SuggestedFilters {
+    /// The gist's raw URL, without a revision hash so it always serves the latest edit.
+    static let defaultURL = URL(string: "https://gist.githubusercontent.com/USER/GIST_ID/raw/filters.json")!
+    private static let cacheKey = "NJSuggestedFilters"
+    private static let maxAge: TimeInterval = 24 * 60 * 60
+
+    static var url: URL {
+        #if DEBUG
+        // Testing: -NJFiltersURL http://localhost:8787/raw/filters.json (npm run filters:serve).
+        if let s = UserDefaults.standard.string(forKey: "NJFiltersURL"), let u = URL(string: s) { return u }
+        #endif
+        return defaultURL
+    }
+
+    /// The parsed downloaded file, else the bundled one.
+    private static var sites: [String: Any] = load()
+    private static var fetching = false
+
+    private static func load() -> [String: Any] {
+        let cached = UserDefaults.standard.dictionary(forKey: cacheKey)?["body"] as? Data
+        if let sites = cached.flatMap(parse) { return sites }
+        let bundled = Bundle.main.url(forResource: "filters", withExtension: "json", subdirectory: "public/filters")
+        return bundled.flatMap { try? Data(contentsOf: $0) }.flatMap(parse) ?? [:]
+    }
+
+    private static func parse(_ data: Data) -> [String: Any]? {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              obj["v"] as? Int == 1 else { return nil }
+        return obj["sites"] as? [String: Any]
+    }
+
+    static func hasAny(host: String) -> Bool {
+        sites[RecipeHandler.normalize(host)] != nil
+    }
+
+    /// The suggested styles for this site and kind of page: "keep" applies to every page,
+    /// "article" / "section" ({ "keep": [...] }) only to that kind.
+    private static func keep(host: String, article: Bool?) -> [String]? {
+        guard let site = sites[RecipeHandler.normalize(host)] as? [String: Any] else { return nil }
+        var keep = site["keep"] as? [String] ?? []
+        let kinds = article.map { [$0 ? "article" : "section"] } ?? ["article", "section"]
+        for kind in kinds {
+            keep += ((site[kind] as? [String: Any])?["keep"] as? [String] ?? []).filter { !keep.contains($0) }
+        }
+        return keep.isEmpty ? nil : keep
+    }
+
+    /// Calls back on the main queue, after a refresh if the copy is a day old (the fetch
+    /// gives up after 2 seconds and the copy on hand is used).
+    static func lookup(host: String, article: Bool?, completion: @escaping ([String]?) -> Void) {
+        refreshIfStale { completion(keep(host: host, article: article)) }
+    }
+
+    static func refreshIfStale(then done: (() -> Void)? = nil) {
+        let cache = UserDefaults.standard.dictionary(forKey: cacheKey) ?? [:]
+        if let checked = cache["checked"] as? Date, Date().timeIntervalSince(checked) < maxAge {
+            done?(); return
+        }
+        guard !fetching else { done?(); return }
+        fetching = true
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 2)
+        if let etag = cache["etag"] as? String { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            DispatchQueue.main.async {
+                fetching = false
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                var cache = cache
+                if status == 200, let data, parse(data) != nil {
+                    cache["body"] = data
+                    cache["etag"] = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "ETag")
+                    cache["checked"] = Date()
+                    sites = load()
+                } else if status == 304 {
+                    cache["checked"] = Date()
+                }
+                // Anything else (offline, a bad file) keeps what's on hand and tries again next time.
+                if status == 200 || status == 304 { UserDefaults.standard.set(cache, forKey: cacheKey) }
+                NSLog("NewsJuice suggested filters: %@ -> %d %@", url.absoluteString, status,
+                      error?.localizedDescription ?? "")
+                done?()
+            }
+        }.resume()
     }
 }
