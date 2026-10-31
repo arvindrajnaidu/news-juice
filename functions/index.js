@@ -21,13 +21,16 @@ const DAILY_CHARS = 27000;
 
 const VOICE = 'coral';
 const INSTRUCTIONS = [
-  'Voice: a warm, calm, trustworthy news presenter.',
-  'Tone: follow the content. Serious and measured for hard news, conflict or loss;',
-  'lighter and brighter for features, culture and sport. Never theatrical.',
-  'Pacing: natural, unhurried, with brief pauses at sentence ends.',
+  'Voice: a professional broadcast news anchor, like a primetime TV news presenter:',
+  'authoritative, clear and confident.',
+  'Delivery: crisp diction and a measured newsroom cadence; give names, places and numbers',
+  'a little weight; land the end of each sentence firmly.',
+  'Tone: composed and serious for hard news, conflict or loss; a touch warmer for lighter',
+  'stories. Never casual, never dramatic.',
+  'Pauses: short and deliberate between sentences.',
   'Read the text exactly as written; do not add or skip words.',
 ].join(' ');
-const HEADLINE = ' This is a headline: read it clearly, with a little emphasis, as a presenter introduces a story.';
+const HEADLINE = ' This is a headline: deliver it like the top of a bulletin, clear and punchy, with slight emphasis.';
 
 exports.speak = onRequest(
   { region: 'us-central1', secrets: [OPENAI_API_KEY], maxInstances: 10, timeoutSeconds: 60, memory: '256MiB' },
