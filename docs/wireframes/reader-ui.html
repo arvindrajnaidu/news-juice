@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reader UI wireframes</title>
+<style>
+  :root { --ink:#1d1b18; --muted:#8a8378; --line:#d9d2c5; --paper:#fbf8f2; --ui:#f1ede5; --accent:#e8a317; --blue:#2f6fd6; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 28px 20px 40px; background: #e9e5dd; color: var(--ink); font: 14px/1.4 -apple-system, system-ui, sans-serif; }
+  h1 { font: 700 22px Georgia, serif; margin: 0 0 4px; }
+  .intro { color: #555; margin: 0 0 24px; max-width: 980px; }
+  .row { display: flex; gap: 28px; flex-wrap: wrap; align-items: flex-start; }
+  .opt { width: 300px; }
+  .opt h2 { font-size: 16px; margin: 0 0 2px; }
+  .opt .tag { color: #666; margin: 0 0 10px; font-size: 13px; }
+  .pair { display: flex; gap: 10px; }
+  .phone { width: 300px; height: 600px; border: 2px solid #222; border-radius: 34px; background: var(--paper); overflow: hidden; position: relative; display: flex; flex-direction: column; }
+  .pair .phone { width: 145px; height: 300px; border-radius: 20px; }
+  .status { height: 26px; flex: none; }
+  .bar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--ui); border-bottom: 1px solid var(--line); font-size: 12px; flex: none; }
+  .bar.bottom { border-top: 1px solid var(--line); border-bottom: 0; justify-content: space-around; padding: 10px 8px 18px; }
+  .pill { flex: 1; text-align: center; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 5px 8px; color: #555; }
+  .ico { width: 26px; height: 26px; border-radius: 8px; border: 1px solid #aaa; display: grid; place-items: center; font-size: 13px; color: #333; background: #fff; flex: none; }
+  .ico.on { background: var(--accent); border-color: var(--accent); color: #000; }
+  .seg { display: flex; border: 1px solid #aaa; border-radius: 9px; overflow: hidden; font-size: 12px; }
+  .seg span { padding: 4px 12px; }
+  .seg .on { background: var(--ink); color: #fff; }
+  .page { flex: 1; overflow: hidden; padding: 12px 16px; }
+  .h { font: 700 19px/1.2 Georgia, serif; margin: 2px 0 10px; }
+  .ln { height: 7px; background: #cfc8bb; border-radius: 4px; margin: 0 0 7px; }
+  .ln.s { width: 70%; } .ln.m { width: 85%; }
+  .gap { height: 10px; }
+  .sheet { position: absolute; left: 0; right: 0; bottom: 0; background: #fff; border-top-left-radius: 18px; border-top-right-radius: 18px; box-shadow: 0 -6px 20px rgba(0,0,0,.18); padding: 8px 14px 18px; font-size: 12px; }
+  .grab { width: 36px; height: 4px; border-radius: 2px; background: #ccc; margin: 0 auto 8px; }
+  .sheet .title { font-weight: 700; font-size: 13px; margin-bottom: 2px; }
+  .sheet .sub { color: var(--muted); margin-bottom: 8px; }
+  .g { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-top: 1px solid #eee; }
+  .g .t { flex: 1; min-width: 0; }
+  .g .t b { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .g .t i { font-style: normal; color: var(--muted); font-size: 11px; }
+  .tog { width: 34px; height: 20px; border-radius: 10px; background: #ddd; position: relative; flex: none; }
+  .tog::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+  .tog.on { background: #34c759; } .tog.on::after { left: 16px; }
+  .chips { display: flex; gap: 6px; padding: 8px 12px; background: var(--ui); border-bottom: 1px solid var(--line); overflow: hidden; flex: none; }
+  .chip { white-space: nowrap; font-size: 11px; padding: 4px 9px; border-radius: 12px; border: 1px solid #aaa; background: #fff; color: #555; }
+  .chip.on { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .chip.more { border-style: dashed; }
+  .note { margin: 10px 0 0; padding-left: 16px; color: #333; font-size: 13px; }
+  .note li { margin: 0 0 4px; }
+  .fab { position: absolute; right: 14px; bottom: 70px; background: var(--ink); color: #fff; border-radius: 20px; padding: 7px 12px; font-size: 12px; box-shadow: 0 3px 10px rgba(0,0,0,.25); }
+  .cap { font-size: 11px; color: #666; text-align: center; margin-top: 4px; }
+  .small .page { padding: 8px 10px; } .small .h { font-size: 12px; } .small .ln { height: 4px; margin-bottom: 4px; }
+  .small .bar { font-size: 9px; padding: 4px 6px; gap: 4px; } .small .ico { width: 16px; height: 16px; font-size: 9px; border-radius: 5px; }
+  .small .pill { padding: 2px 4px; border-radius: 6px; } .small .bar.bottom { padding: 5px 4px 9px; }
+  .small .seg { font-size: 8px; } .small .seg span { padding: 2px 6px; }
+  .small .status { height: 12px; }
+  .site { background: #fff; }
+  .site .blk { background: #ddd; border-radius: 4px; margin: 0 0 6px; }
+</style>
+</head>
+<body>
+<h1>Reader UI — three directions</h1>
+<p class="intro">Fixes the three problems: (1) Done and ‹ crammed together at the top look odd; (2) “Edit” doesn’t say it’s how you choose what gets lifted; (3) “Text on this page” sits inside the article and reads like part of it. In all three, the controls use system UI (sans-serif, grey bars, switches) and the article keeps the serif paper look, so the two never blur.</p>
+
+<div class="row">
+
+  <div class="opt">
+    <h2>A · Browser toolbar + “Lens” sheet</h2>
+    <p class="tag">Familiar Safari-style chrome. Recommended.</p>
+    <div class="phone">
+      <div class="status"></div>
+      <div class="bar"><div class="pill">🔒 ndtv.com</div></div>
+      <div class="page">
+        <div class="h">Goa Cop Sexually Assaults Minor Girl…</div>
+        <div class="ln"></div><div class="ln m"></div><div class="ln"></div><div class="ln s"></div><div class="gap"></div>
+        <div class="ln"></div><div class="ln"></div><div class="ln m"></div><div class="ln s"></div>
+      </div>
+      <div class="sheet">
+        <div class="grab"></div>
+        <div class="title">Lens for ndtv.com</div>
+        <div class="sub">Choose which text you see. Saved for this site.</div>
+        <div class="g"><div class="t"><b>A woman aide of the accused…</b><i>Article text · 18px · 28 paragraphs</i></div><div class="tog on"></div></div>
+        <div class="g"><div class="t"><b>Trending News · Binance hack…</b><i>Link list · 13px · 27 items</i></div><div class="tog"></div></div>
+        <div class="g"><div class="t"><b>The overnight rainfall brought…</b><i>Captions · 14px · 2</i></div><div class="tog"></div></div>
+      </div>
+    </div>
+    <div class="pair" style="margin-top:10px">
+      <div><div class="phone small site">
+        <div class="status"></div>
+        <div class="bar"><div class="pill">ndtv.com</div></div>
+        <div class="page"><div class="blk" style="height:30px"></div><div class="blk" style="height:60px;background:#f3c"></div><div class="blk" style="height:20px"></div></div>
+        <div class="bar bottom"><div class="ico">‹</div><div class="ico">›</div><div class="ico on">◎</div><div class="ico">⚙︎</div><div class="ico">✕</div></div>
+      </div><div class="cap">Page: tap ◎ (or swipe up) to lift</div></div>
+      <div><div class="phone small">
+        <div class="status"></div>
+        <div class="bar"><div class="pill">ndtv.com</div></div>
+        <div class="page"><div class="h">Goa Cop…</div><div class="ln"></div><div class="ln m"></div><div class="ln"></div><div class="ln s"></div></div>
+        <div class="bar bottom"><div class="ico">‹</div><div class="ico">›</div><div class="ico on">◎</div><div class="ico">⚙︎</div><div class="ico">✕</div></div>
+      </div><div class="cap">Reader: ◎ lit; ⚙︎ opens the Lens sheet</div></div>
+    </div>
+    <ul class="note">
+      <li>Top: just the address pill. No Done/‹ crowding.</li>
+      <li>Bottom toolbar: Back, Forward, <b>Lift ◎</b> (lit when reading), <b>Lens ⚙︎</b>, Close.</li>
+      <li>Choosing text lives in a separate white sheet titled “Lens for ndtv.com”, with switches — clearly a setting, not article.</li>
+      <li>Groups get plain names (“Article text”, “Link list”, “Captions”) instead of font sizes.</li>
+    </ul>
+  </div>
+
+  <div class="opt">
+    <h2>B · Page / Reader switch</h2>
+    <p class="tag">Make the mode explicit at the top.</p>
+    <div class="phone">
+      <div class="status"></div>
+      <div class="bar"><div class="ico">✕</div><div style="flex:1;display:flex;justify-content:center"><div class="seg"><span>Page</span><span class="on">Reader</span></div></div><div class="ico">⚙︎</div></div>
+      <div class="page">
+        <div style="font-size:11px;color:#888;margin-bottom:6px">ndtv.com</div>
+        <div class="h">Goa Cop Sexually Assaults Minor Girl…</div>
+        <div class="ln"></div><div class="ln m"></div><div class="ln"></div><div class="ln s"></div><div class="gap"></div>
+        <div class="ln"></div><div class="ln"></div><div class="ln m"></div><div class="ln s"></div><div class="gap"></div>
+        <div class="ln"></div><div class="ln m"></div><div class="ln"></div>
+      </div>
+      <div class="bar bottom" style="justify-content:space-between;padding:10px 16px 18px"><div class="ico">‹</div><span style="color:#888">Swipe ↑↓ to switch</span><div class="ico">›</div></div>
+    </div>
+    <ul class="note">
+      <li>Top bar: ✕ (close), a <b>Page | Reader</b> switch, and ⚙︎ for choosing text.</li>
+      <li>The switch says exactly what lifting does; swipe still works as a shortcut.</li>
+      <li>⚙︎ opens the same Lens sheet as A.</li>
+      <li>Back/forward move to a bottom bar, away from close.</li>
+    </ul>
+  </div>
+
+  <div class="opt">
+    <h2>C · Filter chips</h2>
+    <p class="tag">Choices always visible, one tap each.</p>
+    <div class="phone">
+      <div class="status"></div>
+      <div class="bar"><div class="ico">‹</div><div class="pill">ndtv.com</div><div class="ico">✕</div></div>
+      <div class="chips"><span class="chip on">Article ✓</span><span class="chip">Captions</span><span class="chip">Links</span><span class="chip more">+ 11</span></div>
+      <div class="page">
+        <div class="h">Goa Cop Sexually Assaults Minor Girl…</div>
+        <div class="ln"></div><div class="ln m"></div><div class="ln"></div><div class="ln s"></div><div class="gap"></div>
+        <div class="ln"></div><div class="ln"></div><div class="ln m"></div><div class="ln s"></div><div class="gap"></div>
+        <div class="ln"></div><div class="ln m"></div>
+      </div>
+      <div class="fab">◎ Show page</div>
+    </div>
+    <ul class="note">
+      <li>A grey chip strip under the address bar shows what’s kept; tap a chip to keep or cull, “+11” opens the full list.</li>
+      <li>Chips hide when you scroll down the article, return when you scroll up.</li>
+      <li>A floating “Show page” button flips back; on the page it reads “◎ Lift”.</li>
+      <li>Most direct, but busiest on screen.</li>
+    </ul>
+  </div>
+
+</div>
+</body>
+</html>
