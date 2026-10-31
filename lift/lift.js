@@ -22,11 +22,22 @@
   var SKIP_TAGS = /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|SVG|CANVAS|IFRAME|BUTTON|SELECT|TEXTAREA|INPUT|LABEL|NAV|FORM|HEAD|OPTION)$/;
   var HEADING = /^H[1-6]$/;
 
+  // Tags whose content isn't page text. SVG elements keep their lower-case names
+  // (svg, style inside an icon), so compare in upper case.
+  function skipped(el) {
+    return SKIP_TAGS.test(el.tagName.toUpperCase());
+  }
+
   function isHidden(el, style) {
     if (style.display === 'none' || style.visibility === 'hidden' || +style.opacity === 0) return true;
     if (style.display === 'contents') return false; // no box of its own, but its children render
     var r = el.getBoundingClientRect();
-    return r.width === 0 && r.height === 0;
+    if (r.width === 0 && r.height === 0) return true;
+    // Text for screen readers only ("screen-reader-text", "sr-only"): clipped away or
+    // squeezed into a pixel.
+    if (/inset\(50%|circle\(0/.test(style.clipPath || '')) return true;
+    if (style.position === 'absolute' && /rect\(\s*(0|1)px,?\s*(0|1)px/.test(style.clip || '')) return true;
+    return (r.width <= 1 || r.height <= 1) && style.overflow === 'hidden';
   }
 
   function isOverlay(el, style) {
@@ -48,7 +59,7 @@
   // leaves out the code in nested scripts, which textContent would include.
   function inlineText(n) {
     if (n.nodeType === 3) return n.nodeValue;
-    if (n.nodeType !== 1 || SKIP_TAGS.test(n.tagName)) return '';
+    if (n.nodeType !== 1 || skipped(n)) return '';
     if (n.tagName === 'BR') return '\n';
     var out = '';
     for (var c = n.firstChild; c; c = c.nextSibling) {
@@ -71,7 +82,7 @@
     for (var n = el.firstChild; n; n = n.nextSibling) {
       if (n.nodeType === 3) {
         segs.push({ text: n.nodeValue, href: null });
-      } else if (n.nodeType === 1 && !SKIP_TAGS.test(n.tagName) && flowsInline(n, getComputedStyle(n))) {
+      } else if (n.nodeType === 1 && !skipped(n) && flowsInline(n, getComputedStyle(n))) {
         var t = inlineText(n);
         var a = n.tagName === 'A' ? n : n.querySelector('a');
         if (a) linkChars += t.length;
@@ -110,7 +121,7 @@
     var blocks = [];
     var walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
       acceptNode: function (el) {
-        if (SKIP_TAGS.test(el.tagName) || el.id === 'news-juice-reader') return NodeFilter.FILTER_REJECT;
+        if (skipped(el) || el.id === 'news-juice-reader') return NodeFilter.FILTER_REJECT;
         var st = getComputedStyle(el);
         if (isHidden(el, st)) return NodeFilter.FILTER_REJECT;
         // Overlays (cookie banners, sign-in gates, sticky ads, players) aren't page text.
@@ -149,11 +160,20 @@
       var g = byId[b.g];
       if (!g) {
         g = byId[b.g] = { id: b.g, size: b.size, bold: b.bold, italic: b.italic, family: b.family,
-          link: b.link, color: b.color, transform: b.transform, chars: 0, count: 0, sample: b.text.replace(/\n/g, ' ').slice(0, opts.sampleChars) };
+          link: b.link, color: b.color, transform: b.transform, chars: 0, count: 0, sample: '', blocks: [] };
         groups.push(g);
       }
       g.chars += b.text.length;
       g.count++;
+      g.blocks.push(b.text);
+    });
+    // The sample is the first block that's typical of the group, not a stray label
+    // ("Live") that happens to come first: at least half as long as its longest block.
+    groups.forEach(function (g) {
+      var longest = Math.max.apply(null, g.blocks.map(function (t) { return t.length; }));
+      var text = g.blocks.filter(function (t) { return t.length >= Math.min(40, longest / 2); })[0] || g.blocks[0];
+      g.sample = text.replace(/\n/g, ' ').slice(0, opts.sampleChars);
+      delete g.blocks;
     });
     return groups.sort(function (a, b) { return b.chars - a.chars; });
   }
