@@ -16,8 +16,16 @@
   h1 { font: 700 28px Georgia, serif; margin: 0 0 4px; }
   p.sub { color: var(--muted); margin: 0 0 20px; }
   form { display: flex; gap: 8px; }
-  input { flex: 1; min-width: 0; font-size: 17px; padding: 12px; border-radius: 10px; border: 1px solid var(--line);
-          background: transparent; color: inherit; }
+  .field { flex: 1; min-width: 0; position: relative; display: flex; }
+  /* 17px keeps iOS from zooming the page when the field is focused. */
+  input { flex: 1; min-width: 0; font-size: 17px; padding: 12px 38px 12px 12px; border-radius: 10px; border: 1px solid var(--line);
+          background: transparent; color: inherit; -webkit-appearance: none; appearance: none; }
+  input:focus { outline: none; border-color: var(--accent); }
+  .clear { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 28px; height: 28px; padding: 0;
+           border-radius: 14px; background: var(--line); color: var(--fg); font-size: 14px; font-weight: 600; line-height: 28px; }
+  .clear[hidden] { display: none; }
+  .hint { margin: 8px 2px 0; font-size: 14px; color: #b3261e; min-height: 0; }
+  .hint:empty { display: none; }
   button { font-size: 17px; font-weight: 600; padding: 12px 18px; border: 0; border-radius: 10px; background: var(--accent); color: #000; }
   h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 28px 0 8px; }
   ul { list-style: none; padding: 0; margin: 0; }
@@ -26,11 +34,18 @@
 </head>
 <body>
 <h1>News Lens</h1>
-<p class="sub">Open a news page, then swipe the bar at the bottom up to lift the article.</p>
-<form id="go">
-  <input id="url" type="url" inputmode="url" autocapitalize="off" autocorrect="off" placeholder="ndtv.com or any article URL">
-  <button>Go</button>
+<p class="sub">Open a news page, then tap Lift to read just the text you want.</p>
+<!-- A plain text field with the URL keyboard: type="url" would make the browser refuse
+     "ndtv.com" (no https://) and silently swallow the Go. -->
+<form id="go" novalidate>
+  <div class="field">
+    <input id="url" type="text" inputmode="url" enterkeyhint="go" autocapitalize="none" autocorrect="off"
+           autocomplete="off" spellcheck="false" placeholder="ndtv.com or any article URL" aria-label="Site or article address">
+    <button type="button" class="clear" id="clear" aria-label="Clear" hidden>✕</button>
+  </div>
+  <button type="submit">Go</button>
 </form>
+<p class="hint" id="hint" role="status"></p>
 <h2>Try</h2>
 <ul id="sites">
   <li><a href="https://www.ndtv.com/india">NDTV India</a></li>
@@ -51,10 +66,29 @@
   <li><a href="https://www.theverge.com/tech">The Verge</a></li>
 </ul>
 <script>
+  var field = document.getElementById('url');
+  var clear = document.getElementById('clear');
+  var hint = document.getElementById('hint');
+
+  // What the user typed as an address: "ndtv.com", "www.ndtv.com/india", a full URL,
+  // or a bare name ("ndtv" becomes ndtv.com). Returns null for anything else.
+  function toURL(text) {
+    text = text.trim();
+    if (!text || /\s/.test(text)) return null;
+    if (!/^https?:\/\//i.test(text)) {
+      if (/^[a-z][a-z0-9+.-]*:/i.test(text)) return null; // mailto:, javascript:, ...
+      if (!/\./.test(text.split('/')[0])) text = text.replace(/^([^/]+)/, '$1.com');
+      text = 'https://' + text;
+    }
+    try {
+      var u = new URL(text);
+      return /\./.test(u.hostname) ? u.href : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   function openURL(url) {
-    url = url.trim();
-    if (!url) return;
-    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
     // No bundler here, so call the native bridge directly instead of registerPlugin().
     var cap = window.Capacitor;
     if (cap && cap.isNativePlatform && cap.isNativePlatform()) {
@@ -65,8 +99,33 @@
   }
   document.getElementById('go').addEventListener('submit', function (e) {
     e.preventDefault();
-    openURL(document.getElementById('url').value);
+    if (!field.value.trim()) { field.focus(); return; }
+    var url = toURL(field.value);
+    if (!url) {
+      hint.textContent = /\s/.test(field.value.trim())
+        ? 'Type a site or article address, like ndtv.com (searching isn’t supported yet).'
+        : 'That doesn’t look like a web address. Try something like ndtv.com.';
+      return;
+    }
+    hint.textContent = '';
+    field.blur(); // put the keyboard away before the page opens
+    openURL(url);
   });
+  field.addEventListener('input', function () {
+    clear.hidden = !field.value;
+    hint.textContent = '';
+  });
+  clear.addEventListener('click', function () {
+    field.value = '';
+    clear.hidden = true;
+    hint.textContent = '';
+    field.focus();
+  });
+  // Put the keyboard away when something else is tapped. (Not on scroll or touchmove:
+  // iOS scrolls the page itself to show a focused field, and taps jitter.)
+  document.addEventListener('touchstart', function (e) {
+    if (document.activeElement === field && !e.target.closest('form')) field.blur();
+  }, { passive: true });
   document.getElementById('sites').addEventListener('click', function (e) {
     var a = e.target.closest('a');
     if (!a) return;
