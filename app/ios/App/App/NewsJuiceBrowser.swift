@@ -1,6 +1,9 @@
 import UIKit
 import WebKit
 import Capacitor
+import AVFoundation
+import MediaPlayer
+import NaturalLanguage
 
 // News Lens's in-app browser.
 //
@@ -82,6 +85,10 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     private let homeButton = UIButton(type: .system)
     private let changeButton = UIButton(type: .system)
     private let shareButton = UIButton(type: .system)
+    private let listenButton = UIButton(type: .system)
+    /// Reads the filtered page aloud; its player sits at the bottom while it's on.
+    private let narrator = Narrator()
+    private let player = PlayerBar()
     private let liftButton = UIButton(type: .system)
     /// The app bar under the page that holds the Lift button, so it never covers the site.
     private let bottomBar = UIView()
@@ -182,7 +189,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
 
         // The site sits on top of the reader and slides away to reveal it; the site ends
         // above the bottom bar, the reader runs to the bottom of the screen.
-        for v in [readerView!, webView!, topBar, progress, bottomBar] as [UIView] {
+        for v in [readerView!, webView!, topBar, progress, bottomBar, player] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
@@ -221,7 +228,26 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             liftButton.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -16),
             liftButton.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: 8),
             liftButton.heightAnchor.constraint(equalToConstant: 46),
+
+            player.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            player.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            player.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            player.topAnchor.constraint(equalTo: guide.bottomAnchor, constant: -72),
         ])
+        player.isHidden = true
+        player.onPlayPause = { [weak self] in self?.narrator.togglePause() }
+        player.onPrevious = { [weak self] in self?.narrator.skip(by: -1) }
+        player.onNext = { [weak self] in self?.narrator.skip(by: 1) }
+        player.onSpeed = { [weak self] in self?.narrator.nextSpeed() }
+        player.onClose = { [weak self] in self?.stopListening() }
+        narrator.onPart = { [weak self] i in
+            self?.readerView.evaluateJavaScript("window.NewsJuice && NewsJuice.speaking(\(i.map(String.init) ?? "null"))")
+        }
+        narrator.onChange = { [weak self] in
+            guard let self else { return }
+            self.player.update(playing: self.narrator.isPlaying, speed: self.narrator.speed)
+            if !self.narrator.isOn { self.stopListening() }
+        }
 
         progressObservation = webView.observe(\.estimatedProgress) { [weak self] wv, _ in
             self?.progress.setProgress(Float(wv.estimatedProgress), animated: true)
@@ -280,8 +306,9 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             self?.readerView.evaluateJavaScript("window.NewsJuice && NewsJuice.setMode('pick')")
         }
         iconButton(shareButton, "square.and.arrow.up", "Share filter") { [weak self] in self?.shareFilter() }
-        iconButton(homeButton, "house", "Home") { [weak self] in self?.dismiss(animated: true) }
-        let right = UIStackView(arrangedSubviews: [shareButton, pageButton, changeButton, homeButton])
+        iconButton(listenButton, "headphones", "Listen") { [weak self] in self?.listen() }
+        iconButton(homeButton, "house", "Home") { [weak self] in self?.stopListening(); self?.dismiss(animated: true) }
+        let right = UIStackView(arrangedSubviews: [listenButton, shareButton, pageButton, changeButton, homeButton])
         right.spacing = 0
 
         for v in [backButton, titles, right, rule] as [UIView] {
@@ -333,6 +360,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         homeButton.isHidden = mode != .page
         changeButton.isHidden = mode != .read
         shareButton.isHidden = mode == .page
+        listenButton.isHidden = mode != .read || narrator.isOn
         switch mode {
         case .page: subtitleLabel.text = "Original page"
         case .pick: subtitleLabel.text = "\(lifted) of \(kinds) kinds kept"
@@ -408,6 +436,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
 
     /// "‹ Page": slides the original site back up over the reader and wakes it.
     private func toPage(animated: Bool = true) {
+        stopListening()
         mode = .page
         updateBar(lifted: 0, kinds: 0)
         webView.setAllMediaPlaybackSuspended(false)
@@ -427,6 +456,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     /// reader.js: it switched between Pick and Read (or the lifted count changed).
     func readerMode(_ name: String, lifted: Int, kinds: Int, source: String) {
         mode = name == "read" ? .read : .pick
+        if mode != .read { stopListening() }
         filterSource = source
         updateBar(lifted: lifted, kinds: kinds)
     }
@@ -434,6 +464,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     /// reader.js: a link in the reader was tapped. Open it, and if the site has a
     /// recipe, keep the reader up and lift the new page as soon as it loads.
     func openFromReader(_ url: URL) {
+        stopListening()
         liftOnLoad = url.host.map(Self.hasFilter) ?? false
         appNavigation = true
         webView.load(URLRequest(url: url))
@@ -447,6 +478,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     /// The previous page; from the reader it opens lifted again, behind the reader.
     private func goBack() {
         guard webView.canGoBack else { return }
+        stopListening()
         if mode != .page { liftOnLoad = siteHasRecipe }
         appNavigation = true
         webView.goBack()
@@ -493,6 +525,33 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             sheet.popoverPresentationController?.sourceView = self.shareButton
             self.present(sheet, animated: true)
         }
+    }
+
+    /// Reads the filtered page aloud, from the top.
+    private func listen() {
+        readerView.evaluateJavaScript("window.NewsJuice && NewsJuice.speechParts()") { [weak self] value, _ in
+            guard let self, let obj = value as? [String: Any],
+                  let raw = obj["parts"] as? [[String: Any]], !raw.isEmpty else { return }
+            let parts = raw.compactMap { p in (p["text"] as? String).map { Narrator.Part(text: $0, head: p["head"] as? Bool ?? false) } }
+            let site = self.webView.url?.host.map(RecipeHandler.normalize) ?? ""
+            let title = (obj["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? site
+            self.narrator.start(parts, title: title, site: site)
+            self.player.isHidden = false
+            self.updateBar(lifted: self.lastCounts.lifted, kinds: self.lastCounts.kinds)
+        }
+    }
+
+    /// reader.js: a paragraph was tapped while listening.
+    func listenFrom(_ index: Int) {
+        narrator.jump(to: index)
+    }
+
+    private func stopListening() {
+        guard narrator.isOn || !player.isHidden else { return }
+        narrator.stop()
+        player.isHidden = true
+        readerView?.evaluateJavaScript("window.NewsJuice && NewsJuice.speaking(null)")
+        updateBar(lifted: lastCounts.lifted, kinds: lastCounts.kinds)
     }
 
     private func flash(_ text: String) {
@@ -731,6 +790,9 @@ final class RecipeHandler: NSObject, WKScriptMessageHandler {
                                 lifted: body["lifted"] as? Int ?? 0, kinds: body["kinds"] as? Int ?? 0,
                                 source: body["source"] as? String ?? "none")
             return
+        case "listenFrom":
+            if let i = body["index"] as? Int { browser?.listenFrom(i) }
+            return
         case "navigate":
             if let url = (body["url"] as? String).flatMap(URL.init(string:)) { browser?.openFromReader(url) }
             return
@@ -922,5 +984,240 @@ enum SuggestedFilters {
                 done?()
             }
         }.resume()
+    }
+}
+
+/// Reads a list of paragraphs aloud with the system's voices, one utterance each, and
+/// keeps going with the screen locked (background audio), with lock-screen controls.
+final class Narrator: NSObject, AVSpeechSynthesizerDelegate {
+    struct Part { let text: String; let head: Bool }
+
+    static let speeds: [Float] = [1, 1.25, 1.5, 2, 0.8]
+    private let synth = AVSpeechSynthesizer()
+    private var parts: [Part] = []
+    private var index = 0
+    private var voice: AVSpeechSynthesisVoice?
+    private var title = "", site = ""
+    private(set) var speed: Float = 1
+    private(set) var isOn = false
+    private(set) var isPlaying = false
+    /// The part being read (nil when stopped), and any change worth redrawing for.
+    var onPart: ((Int?) -> Void)?
+    var onChange: (() -> Void)?
+
+    override init() {
+        super.init()
+        synth.delegate = self
+        let center = NotificationCenter.default
+        center.addObserver(self, selector: #selector(interrupted(_:)),
+                           name: AVAudioSession.interruptionNotification, object: nil)
+        center.addObserver(self, selector: #selector(routeChanged(_:)),
+                           name: AVAudioSession.routeChangeNotification, object: nil)
+    }
+
+    func start(_ parts: [Part], title: String, site: String) {
+        self.parts = parts
+        self.title = title
+        self.site = site
+        voice = Self.voice(for: parts.prefix(20).map(\.text).joined(separator: " "))
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
+        try? AVAudioSession.sharedInstance().setActive(true)
+        isOn = true
+        RemoteControls.shared.narrator = self
+        speak(0)
+    }
+
+    func stop() {
+        guard isOn else { return }
+        isOn = false
+        isPlaying = false
+        synth.stopSpeaking(at: .immediate)
+        onPart?(nil)
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        if RemoteControls.shared.narrator === self { RemoteControls.shared.narrator = nil }
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        onChange?()
+    }
+
+    func togglePause() { isPlaying ? pause() : play() }
+
+    func play() {
+        guard isOn else { return }
+        if synth.isPaused { synth.continueSpeaking() } else { speak(index) }
+        isPlaying = true
+        nowPlaying()
+        onChange?()
+    }
+
+    func pause() {
+        guard isOn, isPlaying else { return }
+        synth.pauseSpeaking(at: .word)
+        isPlaying = false
+        nowPlaying()
+        onChange?()
+    }
+
+    func skip(by step: Int) { jump(to: max(0, min(parts.count - 1, index + step))) }
+
+    func jump(to i: Int) {
+        guard isOn, parts.indices.contains(i) else { return }
+        speak(i)
+    }
+
+    func nextSpeed() {
+        let i = Self.speeds.firstIndex(of: speed) ?? 0
+        speed = Self.speeds[(i + 1) % Self.speeds.count]
+        // A new rate applies from the next utterance; restart this paragraph with it.
+        if isPlaying { speak(index) } else { onChange?() }
+    }
+
+    private func speak(_ i: Int) {
+        index = i
+        synth.stopSpeaking(at: .immediate)
+        let part = parts[i]
+        let u = AVSpeechUtterance(string: part.text)
+        u.voice = voice
+        u.rate = min(AVSpeechUtteranceMaximumSpeechRate, AVSpeechUtteranceDefaultSpeechRate * speed)
+        // A beat around headlines so they read as headlines.
+        u.preUtteranceDelay = part.head && i > 0 ? 0.35 : 0
+        u.postUtteranceDelay = part.head ? 0.45 : 0.12
+        synth.speak(u)
+        isPlaying = true
+        onPart?(i)
+        nowPlaying()
+        onChange?()
+    }
+
+    func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        guard isOn, utterance.speechString == parts[index].text else { return }
+        if index + 1 < parts.count { speak(index + 1) } else { stop() }
+    }
+
+    private func nowPlaying() {
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = [
+            MPMediaItemPropertyTitle: title,
+            MPMediaItemPropertyArtist: site,
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
+        ]
+    }
+
+    /// A call or another app's audio paused us; carry on if the system says to.
+    @objc private func interrupted(_ note: Notification) {
+        guard isOn, let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        DispatchQueue.main.async {
+            if type == .began { self.pause(); return }
+            let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt)
+                .map(AVAudioSession.InterruptionOptions.init) ?? []
+            if options.contains(.shouldResume) { self.play() }
+        }
+    }
+
+    /// Headphones unplugged (or Bluetooth gone): pause rather than read out loud.
+    @objc private func routeChanged(_ note: Notification) {
+        guard let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              AVAudioSession.RouteChangeReason(rawValue: raw) == .oldDeviceUnavailable else { return }
+        DispatchQueue.main.async { self.pause() }
+    }
+
+    /// The best installed voice for the text's language: the user's own variant of it
+    /// (en-IN for an Indian English user) and Premium or Enhanced quality first.
+    static func voice(for text: String) -> AVSpeechSynthesisVoice? {
+        let lang = NLLanguageRecognizer.dominantLanguage(for: text)?.rawValue ?? "en"
+        let preferred = Locale.preferredLanguages.first { $0.hasPrefix(lang) }
+        let voices = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(lang) }
+        let best = voices.max { a, b in
+            let ra = (a.language == preferred ? 10 : 0) + a.quality.rawValue
+            let rb = (b.language == preferred ? 10 : 0) + b.quality.rawValue
+            return ra < rb
+        }
+        return best ?? AVSpeechSynthesisVoice(language: preferred ?? lang)
+    }
+}
+
+/// Lock screen, Control Center and headphone buttons, sent to whichever narrator is on.
+final class RemoteControls {
+    static let shared = RemoteControls()
+    weak var narrator: Narrator?
+
+    private init() {
+        let c = MPRemoteCommandCenter.shared()
+        c.playCommand.addTarget { [weak self] _ in self?.narrator?.play(); return .success }
+        c.pauseCommand.addTarget { [weak self] _ in self?.narrator?.pause(); return .success }
+        c.togglePlayPauseCommand.addTarget { [weak self] _ in self?.narrator?.togglePause(); return .success }
+        c.nextTrackCommand.addTarget { [weak self] _ in self?.narrator?.skip(by: 1); return .success }
+        c.previousTrackCommand.addTarget { [weak self] _ in self?.narrator?.skip(by: -1); return .success }
+    }
+}
+
+/// The slim player at the bottom while listening: previous, play/pause, next, speed, close.
+final class PlayerBar: UIView {
+    var onPlayPause: (() -> Void)?, onPrevious: (() -> Void)?, onNext: (() -> Void)?
+    var onSpeed: (() -> Void)?, onClose: (() -> Void)?
+    private let play = UIButton(type: .system)
+    private let speed = UIButton(type: .system)
+
+    private static let tint = UIColor { $0.userInterfaceStyle == .dark
+        ? UIColor(red: 0.70, green: 0.67, blue: 0.62, alpha: 1)
+        : UIColor(red: 0.42, green: 0.39, blue: 0.345, alpha: 1) }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = UIColor { $0.userInterfaceStyle == .dark
+            ? UIColor(red: 0.13, green: 0.125, blue: 0.11, alpha: 1)
+            : UIColor(red: 0.953, green: 0.937, blue: 0.902, alpha: 1) }
+        let rule = UIView()
+        rule.backgroundColor = .separator
+        let button = { (b: UIButton, symbol: String, size: CGFloat, label: String, action: @escaping () -> Void) in
+            var c = UIButton.Configuration.plain()
+            c.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: size, weight: .semibold))
+            c.baseForegroundColor = Self.tint
+            b.configuration = c
+            b.accessibilityLabel = label
+            b.addAction(UIAction { _ in action() }, for: .primaryActionTriggered)
+            b.widthAnchor.constraint(equalToConstant: 52).isActive = true
+            b.heightAnchor.constraint(equalToConstant: 52).isActive = true
+        }
+        let prev = UIButton(type: .system), next = UIButton(type: .system), close = UIButton(type: .system)
+        button(prev, "backward.fill", 20, "Previous paragraph") { [weak self] in self?.onPrevious?() }
+        button(play, "pause.fill", 28, "Pause") { [weak self] in self?.onPlayPause?() }
+        button(next, "forward.fill", 20, "Next paragraph") { [weak self] in self?.onNext?() }
+        button(close, "xmark", 17, "Stop listening") { [weak self] in self?.onClose?() }
+        var sc = UIButton.Configuration.plain()
+        sc.baseForegroundColor = Self.tint
+        sc.contentInsets = .zero
+        sc.titleLineBreakMode = .byClipping
+        speed.configuration = sc
+        speed.accessibilityLabel = "Reading speed"
+        speed.addAction(UIAction { [weak self] _ in self?.onSpeed?() }, for: .primaryActionTriggered)
+        speed.widthAnchor.constraint(equalToConstant: 56).isActive = true
+        let controls = UIStackView(arrangedSubviews: [speed, prev, play, next, close])
+        controls.distribution = .equalSpacing
+        controls.alignment = .center
+        for v in [rule, controls] as [UIView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(v)
+        }
+        NSLayoutConstraint.activate([
+            rule.topAnchor.constraint(equalTo: topAnchor),
+            rule.leadingAnchor.constraint(equalTo: leadingAnchor),
+            rule.trailingAnchor.constraint(equalTo: trailingAnchor),
+            rule.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
+            controls.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            controls.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            controls.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+        ])
+        update(playing: true, speed: 1)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    func update(playing: Bool, speed rate: Float) {
+        play.configuration?.image = UIImage(systemName: playing ? "pause.fill" : "play.fill",
+                                            withConfiguration: UIImage.SymbolConfiguration(pointSize: 28, weight: .semibold))
+        play.accessibilityLabel = playing ? "Pause" : "Play"
+        let text = rate == rate.rounded() ? "\(Int(rate))×" : "\(rate)×"
+        speed.configuration?.attributedTitle = AttributedString(text, attributes: AttributeContainer(
+            [.font: UIFont.monospacedDigitSystemFont(ofSize: 15, weight: .semibold)]))
     }
 }

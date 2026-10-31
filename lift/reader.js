@@ -77,6 +77,8 @@
     '.nj-article p,.nj-article li{margin:0 0 1em}',
     '.nj-article .small{font:14px/1.45 -apple-system,system-ui,sans-serif;color:#7a7368}',
     '.nj-article a{color:inherit;text-decoration:underline;text-decoration-color:#c9c2b6;text-underline-offset:.18em}',
+    '.nj-article .nj-speaking{background:rgba(232,163,23,.16);box-shadow:0 0 0 8px rgba(232,163,23,.16);border-radius:3px}',
+    '.listening .nj-article{padding-bottom:170px}',
     '.nj-article .src{font:13px -apple-system,system-ui,sans-serif;color:#7a7368;word-break:break-all;margin-top:2em}',
     '@media (prefers-color-scheme:dark){.nj-sheet{background:#22201c;color:#e8e3da}.nj-sheet.read{background:#1a1916}',
     '  .nj-card{color:#e8e3da;background:rgba(255,255,255,.06)}.nj-card.on{background:#2e2b26}',
@@ -445,10 +447,17 @@
     });
 
     // Links go through the app, which opens the page and lifts it again when the
-    // site has a recipe; in a plain browser they just navigate.
+    // site has a recipe; in a plain browser they just navigate. While listening, a tap
+    // on a paragraph (not a link) starts reading there.
     article.addEventListener('click', function (e) {
       var a = e.target.closest('a');
-      if (!a) return;
+      if (!a) {
+        var part = e.target.closest('[data-nj-say]');
+        if (part && e.isTrusted && sheet.classList.contains('listening')) {
+          notifyApp({ type: 'listenFrom', index: +part.getAttribute('data-nj-say') });
+        }
+        return;
+      }
       e.preventDefault();
       if (!e.isTrusted) return;
       if (inApp()) notifyApp({ type: 'navigate', url: a.href });
@@ -464,13 +473,40 @@
     if (!inApp()) document.addEventListener('keydown', onKey);
     // What sharing sends: the site's whole recipe, with the current picks for this page.
     var recipe = function () { return elsewhere.concat(keep); };
-    current = { toRead: toRead, toPick: toPick, close: close, recipe: recipe };
+    // Listening: the article's headings and paragraphs, in order, for the app to speak.
+    var speech = function () {
+      if (mode !== 'read') return null;
+      var parts = [];
+      article.querySelectorAll('h1,h2,p:not(.src),li').forEach(function (el) {
+        var text = el.innerText.trim();
+        if (!text) return;
+        el.setAttribute('data-nj-say', parts.length);
+        parts.push({ text: text, head: /^H/.test(el.tagName) });
+      });
+      return { title: r.title || '', parts: parts };
+    };
+    var speaking = function (i) {
+      var old = article.querySelector('.nj-speaking');
+      if (old) old.classList.remove('nj-speaking');
+      sheet.classList.toggle('listening', i !== null);
+      var el = i === null ? null : article.querySelector('[data-nj-say="' + i + '"]');
+      if (!el) return;
+      el.classList.add('nj-speaking');
+      var box = el.getBoundingClientRect();
+      if (box.top < 70 || box.bottom > innerHeight - 180) {
+        sheet.scrollTo({ top: sheet.scrollTop + box.top - innerHeight / 3, behavior: 'smooth' });
+      }
+    };
+    current = { toRead: toRead, toPick: toPick, close: close, recipe: recipe, speech: speech, speaking: speaking };
   }
 
   window.NewsJuice = window.NewsJuice || {};
   window.NewsJuice.showReader = showReader;
   window.NewsJuice.renderHTML = renderHTML;
   window.NewsJuice.currentRecipe = function () { return current ? current.recipe() : null; };
+  window.NewsJuice.speechParts = function () { return current ? current.speech() : null; };
+  // i: the part being read (from speechParts), or null when listening stops.
+  window.NewsJuice.speaking = function (i) { if (current) current.speaking(i); };
   window.NewsJuice.setMode = function (m) {
     if (!current) return;
     if (m === 'read') current.toRead(); else current.toPick();
