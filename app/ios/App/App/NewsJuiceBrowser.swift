@@ -602,12 +602,19 @@ final class RecipeHandler: NSObject, WKScriptMessageHandler {
     }
 }
 
+/// Links for sharing a filter: <base><host>#<filter>. arvindrajnaidu.github.io serves the
+/// apple-app-site-association that opens them in the app, and a page for those without it.
+enum ShareLinks {
+    static let baseURL = URL(string: "https://arvindrajnaidu.github.io/f/")!
+}
+
 /// Suggested filters: one filters.json that Arvind keeps (a public gist; see docs/filters.md),
 /// fetched at most once a day with If-None-Match and kept for offline use, with a copy
 /// bundled in the app for first launch. The user's own filter (RecipeHandler) always wins.
 enum SuggestedFilters {
     /// The gist's raw URL, without a revision hash so it always serves the latest edit.
-    static let defaultURL = URL(string: "https://gist.githubusercontent.com/USER/GIST_ID/raw/filters.json")!
+    static let defaultURL = URL(string:
+        "https://gist.githubusercontent.com/arvindrajnaidu/aec29d9de36b300bc4e8192745d65004/raw/filters.json")!
     private static let cacheKey = "NJSuggestedFilters"
     private static let maxAge: TimeInterval = 24 * 60 * 60
 

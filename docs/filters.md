@@ -63,7 +63,8 @@ A suggestion opens straight in the reader with the subtitle "Suggested filter".
 ## The gist
 
 - The app fetches the raw URL **without** a revision hash:
-  `https://gist.githubusercontent.com/USER/GIST_ID/raw/filters.json`.
+  `https://gist.githubusercontent.com/arvindrajnaidu/aec29d9de36b300bc4e8192745d65004/raw/filters.json`
+  (gist https://gist.github.com/arvindrajnaidu/aec29d9de36b300bc4e8192745d65004).
   It's set in `SuggestedFilters.defaultURL` in `NewsJuiceBrowser.swift`.
 - **Edits can lag:** raw gist content is cached, so an edit can take a few minutes to
   show up there. Each device then picks it up within a day.
