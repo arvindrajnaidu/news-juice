@@ -78,6 +78,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
     private let homeButton = UIButton(type: .system)
     private let changeButton = UIButton(type: .system)
     private let liftButton = UIButton(type: .system)
+    /// The app bar under the page that holds the Lift button, so it never covers the site.
+    private let bottomBar = UIView()
     private let progress = UIProgressView(progressViewStyle: .bar)
     private var progressObservation: NSKeyValueObservation?
     /// Set when the next page should open straight in the reader (a link tapped in the
@@ -149,9 +151,17 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
 
         let topBar = makeTopBar()
         makeLiftButton()
+        bottomBar.backgroundColor = Self.bar
+        let hairline = UIView()
+        hairline.backgroundColor = .separator
+        for v in [hairline, liftButton] as [UIView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            bottomBar.addSubview(v)
+        }
 
-        // The site sits on top of the reader and slides away to reveal it.
-        for v in [readerView!, webView!, topBar, progress, liftButton] as [UIView] {
+        // The site sits on top of the reader and slides away to reveal it; the site ends
+        // above the bottom bar, the reader runs to the bottom of the screen.
+        for v in [readerView!, webView!, topBar, progress, bottomBar] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
@@ -169,17 +179,27 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
             webView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            webView.bottomAnchor.constraint(equalTo: bottomBar.topAnchor),
 
             readerView.topAnchor.constraint(equalTo: webView.topAnchor),
-            readerView.leadingAnchor.constraint(equalTo: webView.leadingAnchor),
-            readerView.trailingAnchor.constraint(equalTo: webView.trailingAnchor),
-            readerView.bottomAnchor.constraint(equalTo: webView.bottomAnchor),
+            readerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            readerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            readerView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
-            liftButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            liftButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            liftButton.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -12),
-            liftButton.heightAnchor.constraint(equalToConstant: 54),
+            bottomBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bottomBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            bottomBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            bottomBar.topAnchor.constraint(equalTo: guide.bottomAnchor, constant: -62),
+
+            hairline.topAnchor.constraint(equalTo: bottomBar.topAnchor),
+            hairline.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor),
+            hairline.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor),
+            hairline.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
+
+            liftButton.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: 16),
+            liftButton.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -16),
+            liftButton.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: 8),
+            liftButton.heightAnchor.constraint(equalToConstant: 46),
         ])
 
         progressObservation = webView.observe(\.estimatedProgress) { [weak self] wv, _ in
@@ -257,7 +277,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         return bar
     }
 
-    /// The full-width amber Lift button floating over the page.
+    /// The full-width amber Lift button in the bar under the page.
     private func makeLiftButton() {
         var c = UIButton.Configuration.filled()
         c.title = "Lift"
@@ -266,15 +286,11 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         c.imagePadding = 8
         c.baseBackgroundColor = Self.accent
         c.baseForegroundColor = Self.ink
-        c.background.cornerRadius = 16
+        c.background.cornerRadius = 14
         c.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
             var a = $0; a.font = .systemFont(ofSize: 17, weight: .semibold); return a
         }
         liftButton.configuration = c
-        liftButton.layer.shadowColor = Self.ink.cgColor
-        liftButton.layer.shadowOpacity = 0.22
-        liftButton.layer.shadowRadius = 12
-        liftButton.layer.shadowOffset = CGSize(width: 0, height: 10)
         liftButton.addAction(UIAction { [weak self] _ in self?.lift() }, for: .primaryActionTriggered)
     }
 
@@ -331,7 +347,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         }
     }
 
-    /// Slides the site (and the Lift button) down out of the way and pauses it.
+    /// Slides the site (and the Lift bar) down out of the way and pauses it.
     private func revealReader() {
         readerView.isHidden = false
         webView.pauseAllMediaPlayback()
@@ -341,8 +357,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0, options: []) {
             self.webView.transform = drop
             self.webView.alpha = 0
-            self.liftButton.transform = CGAffineTransform(translationX: 0, y: 140)
-            self.liftButton.alpha = 0
+            self.bottomBar.transform = CGAffineTransform(translationX: 0, y: self.bottomBar.bounds.height)
+            self.bottomBar.alpha = 0
         } completion: { _ in
             guard self.mode != .page else { return }
             self.webView.isHidden = true
@@ -358,8 +374,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         let show = {
             self.webView.transform = .identity
             self.webView.alpha = 1
-            self.liftButton.transform = .identity
-            self.liftButton.alpha = 1
+            self.bottomBar.transform = .identity
+            self.bottomBar.alpha = 1
         }
         let done = { (_: Bool) in if self.mode == .page { self.readerView.isHidden = true } }
         guard animated else { show(); done(true); return }
