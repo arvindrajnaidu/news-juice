@@ -43,6 +43,8 @@
     '.nj-small{font:14px/1.45 system-ui,sans-serif;color:#7a7368}',
     '.nj-empty{font:15px system-ui,sans-serif;color:#7a7368}',
     '.nj-src{font:13px system-ui,sans-serif;color:#7a7368;word-break:break-all}',
+    '.nj-body a{color:inherit;text-decoration:underline;text-decoration-color:#c9c2b6;text-underline-offset:.18em}',
+    '.nj-body a:active{background:#efe7d6}',
     '@media (prefers-color-scheme:dark){.nj-sheet{background:#1a1916;color:#e8e3da}.nj-handle span{background:#4a463f}',
     '  .nj-row+.nj-row{border-top-color:#3a372f}.nj-pill{background:#3a372f;color:#9a9387}.nj-row:not(.kept) .nj-sample{color:#6f695f}}',
   ].join('\n');
@@ -66,16 +68,24 @@
     return g ? [g.id] : [];
   }
 
-  function loadRecipe(r, given) {
-    var recipe = given;
-    if (!recipe) {
-      try { recipe = JSON.parse(localStorage.getItem(STORE_PREFIX + r.host) || 'null'); } catch (e) { recipe = null; }
-    }
-    if (!recipe) return null;
+  function storedRecipe(r, given) {
+    if (given) return given;
+    try { return JSON.parse(localStorage.getItem(STORE_PREFIX + r.host) || 'null'); } catch (e) { return null; }
+  }
+
+  function onPage(r) {
     var present = {};
     r.groups.forEach(function (g) { present[g.id] = true; });
+    return present;
+  }
+
+  // The saved groups that are on this page, or null if none are.
+  function loadRecipe(r, given) {
+    var recipe = storedRecipe(r, given);
+    if (!recipe) return null;
+    var present = onPage(r);
     var keep = recipe.filter(function (id) { return present[id]; });
-    return keep.length ? keep : null; // none of the saved groups are on this page
+    return keep.length ? keep : null;
   }
 
   function saveRecipe(host, keep) {
@@ -84,6 +94,21 @@
       return;
     }
     try { localStorage.setItem(STORE_PREFIX + host, JSON.stringify(keep)); } catch (e) { /* storage blocked */ }
+  }
+
+  // A block's text as HTML, with its links (the whole block, or ranges in it) as <a>.
+  function textHTML(b) {
+    var br = function (s) { return esc(s).replace(/\n/g, '<br>'); };
+    var link = function (href, s) { return '<a href="' + esc(href) + '">' + br(s) + '</a>'; };
+    if (b.href) return link(b.href, b.text);
+    var html = '';
+    var at = 0;
+    (b.links || []).forEach(function (l) {
+      if (l[0] < at) return;
+      html += br(b.text.slice(at, l[0])) + link(l[2], b.text.slice(l[0], l[1]));
+      at = l[1];
+    });
+    return html + br(b.text.slice(at));
   }
 
   function bodyHTML(r, keep) {
@@ -107,7 +132,7 @@
       var isLi = b.tag === 'li';
       if (isLi && !inList) { html += '<ul>'; inList = true; }
       if (!isLi && inList) { html += '</ul>'; inList = false; }
-      var t = esc(b.text).replace(/\n/g, '<br>');
+      var t = textHTML(b);
       html += g.size > base + 1 && b.text.length <= 200 ? '<h2>' + t + '</h2>'
             : isLi ? '<li>' + t + '</li>'
             : g.size < base - 1 ? '<p class="nj-small">' + t + '</p>'
@@ -143,7 +168,14 @@
     var old = document.getElementById('news-juice-reader');
     if (old) old.remove();
     var saved = loadRecipe(r, opts.recipe);
+    // A site's recipe covers all its page types (section fronts and articles style
+    // their text differently), so saving keeps the groups that aren't on this page.
+    var present = onPage(r);
+    var elsewhere = (storedRecipe(r, opts.recipe) || []).filter(function (id) { return !present[id]; });
+    // A site that's set up but meets a new kind of page: remember the default pick for
+    // it too (the list still opens this time so it can be adjusted).
     var keep = saved || defaultKeep(r);
+    if (!saved && elsewhere.length) saveRecipe(r.host, elsewhere.concat(keep));
 
     var host = document.createElement('div');
     host.id = 'news-juice-reader';
@@ -173,6 +205,19 @@
     };
     // Only real taps count: page scripts sometimes fire synthetic clicks.
     toggle.addEventListener('click', function (e) { if (e.isTrusted) togglePanel(); });
+    // Links go through the app, which opens the page and lifts it again when the
+    // site has a recipe; in a plain browser they just navigate.
+    body.addEventListener('click', function (e) {
+      var a = e.target.closest('a');
+      if (!a) return;
+      e.preventDefault();
+      if (!e.isTrusted) return;
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.newsJuice) {
+        notifyApp({ type: 'navigate', url: a.href });
+      } else {
+        location.href = a.href;
+      }
+    });
     // The iOS app's Hide/Edit button in its top bar calls NewsJuice.togglePanel().
     current = { togglePanel: togglePanel };
     panel.addEventListener('click', function (e) {
@@ -182,7 +227,7 @@
       var id = row.getAttribute('data-g');
       var i = keep.indexOf(id);
       if (i >= 0) keep.splice(i, 1); else keep.push(id);
-      saveRecipe(r.host, keep.slice());
+      saveRecipe(r.host, elsewhere.concat(keep));
       var scroll = panel.scrollTop;
       render();
       panel.scrollTop = scroll;

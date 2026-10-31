@@ -10,7 +10,9 @@
 // Exposes window.NewsJuice.lift(options) -> result object:
 //   { ok, url, host, title,
 //     groups: [{ id, size, bold, italic, family, link, chars, count, sample }],  // most text first
-//     blocks: [{ g, text, tag }] }                                               // page order
+//     blocks: [{ g, text, tag, href?, links? }] }                                // page order
+// A block that sits inside a link has its `href`; links within a block's text are
+// `links`: [start, end, href] ranges into `text`.
 (function () {
   var DEFAULTS = {
     maxLinkDensity: 0.5,   // blocks with more link text than this are link lists, grouped apart from prose
@@ -50,24 +52,48 @@
     return out;
   }
 
+  function webLink(a) {
+    return a && /^https?:/i.test(a.href) ? a.href : null;
+  }
+
   // Text that belongs to this element directly (its own text nodes plus inline
-  // children), not text inside nested block elements.
+  // children), not text inside nested block elements. Also returns where the
+  // links are: [start, end, href] ranges into the text.
   function ownText(el) {
-    var out = '';
+    var segs = []; // { text, href }
     var linkChars = 0;
     for (var n = el.firstChild; n; n = n.nextSibling) {
       if (n.nodeType === 3) {
-        out += n.nodeValue;
+        segs.push({ text: n.nodeValue, href: null });
       } else if (n.nodeType === 1 && !SKIP_TAGS.test(n.tagName) && flowsInline(n, getComputedStyle(n))) {
         var t = inlineText(n);
-        out += t;
-        if (n.tagName === 'A' || n.querySelector('a')) linkChars += t.length;
+        var a = n.tagName === 'A' ? n : n.querySelector('a');
+        if (a) linkChars += t.length;
+        // A link only when it covers the whole inline child (<a>, or <b><a>..</a></b>).
+        var href = a && a.textContent.trim() === n.textContent.trim() ? webLink(a) : null;
+        segs.push({ text: t, href: href });
       }
     }
-    var text = out.replace(/[ \t\r\f\v ]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim();
+    // Collapse whitespace segment by segment so the link ranges stay right.
+    var text = '';
+    var links = [];
+    segs.forEach(function (sg) {
+      var t = sg.text.replace(/[ \t\r\f\v\u00a0]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n+/g, '\n');
+      if (/[ \n]$/.test(text) || !text) t = t.replace(/^[ \n]+/, '');
+      if (!t) return;
+      if (sg.href) {
+        var lead = t.length - t.replace(/^[ \n]+/, '').length;
+        var core = t.trim();
+        if (core) links.push([text.length + lead, text.length + lead + core.length, sg.href]);
+      }
+      text += t;
+    });
+    var trimmed = text.replace(/[ \n]+$/, '');
+    links = links.filter(function (l) { return l[1] <= trimmed.length; });
     // Text inside a link (a headline in a "trending" list) is all link.
-    var linkDensity = el.closest('a') ? 1 : text.length ? Math.min(1, linkChars / text.length) : 0;
-    return { text: text, linkDensity: linkDensity };
+    var outer = el.closest('a');
+    var linkDensity = outer ? 1 : trimmed.length ? Math.min(1, linkChars / trimmed.length) : 0;
+    return { text: trimmed, linkDensity: linkDensity, href: webLink(outer), links: links };
   }
 
   function familyOf(style) {
@@ -97,6 +123,8 @@
       blocks.push({
         g: size + 'px' + (bold ? ' bold' : '') + (italic ? ' italic' : '') + ' ' + family + (link ? ' links' : ''),
         text: own.text,
+        href: own.href,
+        links: own.links,
         tag: el.tagName.toLowerCase(),
         size: size, bold: bold, italic: italic, family: family, link: link,
       });
@@ -141,7 +169,12 @@
       host: location.hostname.replace(/^www\./, ''),
       title: pickTitle(),
       groups: groups,
-      blocks: blocks.map(function (b) { return { g: b.g, text: b.text, tag: b.tag }; }),
+      blocks: blocks.map(function (b) {
+        var out = { g: b.g, text: b.text, tag: b.tag };
+        if (b.href) out.href = b.href;
+        else if (b.links.length) out.links = b.links;
+        return out;
+      }),
     };
   }
 

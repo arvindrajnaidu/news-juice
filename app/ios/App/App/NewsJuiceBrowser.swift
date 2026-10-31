@@ -56,6 +56,12 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
     private var webView: WKWebView!
     private let titleLabel = UILabel()
     private let listButton = UIButton(type: .system)
+    private let backButton = UIButton(type: .system)
+    private var canGoBackObservation: NSKeyValueObservation?
+    /// Set when a link in the reader opened the current page: lift it once it loads.
+    private var liftOnLoad = false
+    /// Pages that were showing the reader, so going back to one lifts it again.
+    private var liftedPages = Set<String>()
     private let liftBar = UIView()
     private let liftLabel = UILabel()
     private let progress = UIProgressView(progressViewStyle: .bar)
@@ -139,6 +145,9 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
             self?.progress.setProgress(Float(wv.estimatedProgress), animated: true)
             self?.progress.isHidden = wv.estimatedProgress >= 1
         }
+        canGoBackObservation = webView.observe(\.canGoBack, options: [.initial]) { [weak self] wv, _ in
+            self?.backButton.isHidden = !wv.canGoBack
+        }
         webView.load(URLRequest(url: startURL))
     }
 
@@ -160,18 +169,25 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         }, for: .primaryActionTriggered)
         listButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
         listButton.isHidden = true
-        for v in [close, titleLabel, listButton] as [UIView] {
+        backButton.setImage(UIImage(systemName: "chevron.backward",
+                                    withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)), for: .normal)
+        backButton.accessibilityLabel = "Back"
+        backButton.isHidden = true
+        backButton.addAction(UIAction { [weak self] _ in self?.webView.goBack() }, for: .primaryActionTriggered)
+        for v in [close, backButton, titleLabel, listButton] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             bar.addSubview(v)
         }
         NSLayoutConstraint.activate([
             close.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 16),
             close.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            backButton.leadingAnchor.constraint(equalTo: close.trailingAnchor, constant: 14),
+            backButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             listButton.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -16),
             listButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: bar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            titleLabel.widthAnchor.constraint(lessThanOrEqualTo: bar.widthAnchor, constant: -160),
+            titleLabel.widthAnchor.constraint(lessThanOrEqualTo: bar.widthAnchor, constant: -200),
         ])
         return bar
     }
@@ -260,6 +276,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
                obj["ok"] as? Bool == true {
                 self.readerUp = true
                 self.listButton.isHidden = false
+                if let url = self.webView.url?.absoluteString { self.liftedPages.insert(url) }
                 self.updateLiftLabel()
             } else {
                 self.flash("Nothing to lift on this page")
@@ -271,6 +288,17 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         // reader.js closes on Escape.
         webView.evaluateJavaScript("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))")
         readerClosed()
+    }
+
+    /// reader.js: a link in the reader was tapped. Open it, and if the site has a
+    /// recipe, lift it as soon as it loads so reading carries on in the reader.
+    func openFromReader(_ url: URL) {
+        liftOnLoad = url.host.flatMap(RecipeHandler.recipe(forHost:)) != nil
+        webView.load(URLRequest(url: url))
+    }
+
+    private var siteHasRecipe: Bool {
+        webView.url?.host.flatMap(RecipeHandler.recipe(forHost:)) != nil
     }
 
     /// reader.js: the list of text groups was opened or folded.
@@ -304,6 +332,21 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         #endif
     }
 
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        let backToLifted = webView.url.map { liftedPages.contains($0.absoluteString) } ?? false
+        if liftOnLoad || (backToLifted && siteHasRecipe) {
+            // A beat for late paragraphs to render before lifting.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                guard let self, !self.readerUp else { return }
+                self.lift()
+            }
+        }
+        liftOnLoad = false
+        #if DEBUG
+        debugFinish()
+        #endif
+    }
+
     #if DEBUG
     // Testing hooks, set as launch arguments:
     //   -NJAutoLift <seconds>   lift that long after the page finishes loading and write
@@ -312,7 +355,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
     //                           to Documents/capture-<page>.html
     private var debugRunDone = false
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    private func debugFinish() {
         let delay = UserDefaults.standard.double(forKey: "NJAutoLift")
         guard delay > 0, !debugRunDone else { return }
         debugRunDone = true
@@ -382,6 +425,9 @@ final class RecipeHandler: NSObject, WKScriptMessageHandler {
             return
         case "readerClosed":
             browser?.readerClosed()
+            return
+        case "navigate":
+            if let url = (body["url"] as? String).flatMap(URL.init(string:)) { browser?.openFromReader(url) }
             return
         default:
             break
