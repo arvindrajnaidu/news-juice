@@ -97,6 +97,10 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         ? UIColor(red: 0.13, green: 0.125, blue: 0.11, alpha: 1)
         : UIColor(red: 0.953, green: 0.937, blue: 0.902, alpha: 1) }
     private static let accent = UIColor(red: 0.91, green: 0.64, blue: 0.09, alpha: 1)
+    /// Warm grey for the small icon controls (back, globe, sliders, house).
+    private static let iconTint = UIColor { $0.userInterfaceStyle == .dark
+        ? UIColor(red: 0.70, green: 0.67, blue: 0.62, alpha: 1)
+        : UIColor(red: 0.42, green: 0.39, blue: 0.345, alpha: 1) }
     private static let ink = UIColor(red: 0.114, green: 0.106, blue: 0.094, alpha: 1)
 
     init(url: URL) {
@@ -231,6 +235,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         back.image = UIImage(systemName: "chevron.backward",
                              withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .semibold))
         back.contentInsets = .zero
+        back.baseForegroundColor = Self.iconTint
         backButton.configuration = back
         backButton.accessibilityLabel = "Back"
         backButton.addAction(UIAction { [weak self] _ in self?.goBack() }, for: .primaryActionTriggered)
@@ -250,6 +255,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
             c.image = UIImage(systemName: symbol,
                               withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .semibold))
             c.contentInsets = .zero
+            c.baseForegroundColor = Self.iconTint
             button.configuration = c
             button.accessibilityLabel = label
             button.addAction(UIAction { _ in action() }, for: .primaryActionTriggered)
