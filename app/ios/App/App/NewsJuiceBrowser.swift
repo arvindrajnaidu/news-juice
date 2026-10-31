@@ -4,6 +4,7 @@ import Capacitor
 import AVFoundation
 import MediaPlayer
 import NaturalLanguage
+import FirebaseAppCheck
 
 // News Lens's in-app browser.
 //
@@ -232,7 +233,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             player.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             player.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             player.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            player.topAnchor.constraint(equalTo: guide.bottomAnchor, constant: -72),
+            player.topAnchor.constraint(equalTo: guide.bottomAnchor, constant: -80),
         ])
         player.isHidden = true
         player.onPlayPause = { [weak self] in self?.narrator.togglePause() }
@@ -245,7 +246,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         }
         narrator.onChange = { [weak self] in
             guard let self else { return }
-            self.player.update(playing: self.narrator.isPlaying, speed: self.narrator.speed)
+            self.player.update(playing: self.narrator.isPlaying, speed: self.narrator.speed, ai: self.narrator.usingAI)
             if !self.narrator.isOn { self.stopListening() }
         }
 
@@ -987,20 +988,29 @@ enum SuggestedFilters {
     }
 }
 
-/// Reads a list of paragraphs aloud with the system's voices, one utterance each, and
-/// keeps going with the screen locked (background audio), with lock-screen controls.
-final class Narrator: NSObject, AVSpeechSynthesizerDelegate {
+/// Reads a list of paragraphs aloud, one at a time, and keeps going with the screen
+/// locked (background audio), with lock-screen controls. Each paragraph comes from the
+/// AI voice (AIVoice, our speak function) with the next one fetched ahead; if that
+/// fails (offline, over the daily allowance), it carries on in the system's voice.
+final class Narrator: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
     struct Part { let text: String; let head: Bool }
 
     static let speeds: [Float] = [1, 1.25, 1.5, 2, 0.8]
     private let synth = AVSpeechSynthesizer()
+    private var audio: AVAudioPlayer?
     private var parts: [Part] = []
     private var index = 0
     private var voice: AVSpeechSynthesisVoice?
     private var title = "", site = ""
+    /// Audio fetched for each part, and the fetches under way.
+    private var clips: [Int: Data] = [:]
+    private var fetches: [Int: Task<Data, Error>] = [:]
+    /// Bumped on every jump, so a fetch that lands late doesn't play over a newer one.
+    private var generation = 0
     private(set) var speed: Float = 1
     private(set) var isOn = false
     private(set) var isPlaying = false
+    private(set) var usingAI = true
     /// The part being read (nil when stopped), and any change worth redrawing for.
     var onPart: ((Int?) -> Void)?
     var onChange: (() -> Void)?
@@ -1019,6 +1029,8 @@ final class Narrator: NSObject, AVSpeechSynthesizerDelegate {
         self.parts = parts
         self.title = title
         self.site = site
+        clips = [:]
+        usingAI = true
         voice = Self.voice(for: parts.prefix(20).map(\.text).joined(separator: " "))
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
         try? AVAudioSession.sharedInstance().setActive(true)
@@ -1031,7 +1043,11 @@ final class Narrator: NSObject, AVSpeechSynthesizerDelegate {
         guard isOn else { return }
         isOn = false
         isPlaying = false
-        synth.stopSpeaking(at: .immediate)
+        generation += 1
+        silence()
+        fetches.values.forEach { $0.cancel() }
+        fetches = [:]
+        clips = [:]
         onPart?(nil)
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         if RemoteControls.shared.narrator === self { RemoteControls.shared.narrator = nil }
@@ -1043,7 +1059,7 @@ final class Narrator: NSObject, AVSpeechSynthesizerDelegate {
 
     func play() {
         guard isOn else { return }
-        if synth.isPaused { synth.continueSpeaking() } else { speak(index) }
+        if let audio { audio.play() } else if synth.isPaused { synth.continueSpeaking() } else { speak(index) }
         isPlaying = true
         nowPlaying()
         onChange?()
@@ -1051,7 +1067,8 @@ final class Narrator: NSObject, AVSpeechSynthesizerDelegate {
 
     func pause() {
         guard isOn, isPlaying else { return }
-        synth.pauseSpeaking(at: .word)
+        audio?.pause()
+        if synth.isSpeaking { synth.pauseSpeaking(at: .word) }
         isPlaying = false
         nowPlaying()
         onChange?()
@@ -1067,13 +1084,65 @@ final class Narrator: NSObject, AVSpeechSynthesizerDelegate {
     func nextSpeed() {
         let i = Self.speeds.firstIndex(of: speed) ?? 0
         speed = Self.speeds[(i + 1) % Self.speeds.count]
-        // A new rate applies from the next utterance; restart this paragraph with it.
-        if isPlaying { speak(index) } else { onChange?() }
+        if let audio {
+            audio.rate = speed
+        } else if isPlaying {
+            // The system voice takes a new rate from the next utterance; restart this one.
+            speak(index)
+            return
+        }
+        onChange?()
+    }
+
+    private func silence() {
+        audio?.stop()
+        audio = nil
+        synth.stopSpeaking(at: .immediate)
     }
 
     private func speak(_ i: Int) {
         index = i
-        synth.stopSpeaking(at: .immediate)
+        generation += 1
+        let gen = generation
+        silence()
+        isPlaying = true
+        onPart?(i)
+        nowPlaying()
+        onChange?()
+        guard usingAI else { speakBuiltIn(i); return }
+        Task { @MainActor in
+            do {
+                let data = try await self.clip(i)
+                guard gen == self.generation, self.isOn else { return }
+                let player = try AVAudioPlayer(data: data)
+                player.delegate = self
+                player.enableRate = true
+                player.rate = self.speed
+                self.audio = player
+                if self.isPlaying { player.play() }
+                if i + 1 < self.parts.count { _ = Task { try? await self.clip(i + 1) } }
+            } catch {
+                guard gen == self.generation, self.isOn else { return }
+                NSLog("NewsJuice AI voice unavailable (%@); using the built-in voice", String(describing: error))
+                self.usingAI = false
+                self.onChange?()
+                self.speakBuiltIn(i)
+            }
+        }
+    }
+
+    /// The AI audio for part i: already fetched, under way, or fetched now.
+    @MainActor private func clip(_ i: Int) async throws -> Data {
+        if let data = clips[i] { return data }
+        let task = fetches[i] ?? Task { try await AIVoice.speak(parts[i].text, head: parts[i].head) }
+        fetches[i] = task
+        defer { fetches[i] = nil }
+        let data = try await task.value
+        clips[i] = data
+        return data
+    }
+
+    private func speakBuiltIn(_ i: Int) {
         let part = parts[i]
         let u = AVSpeechUtterance(string: part.text)
         u.voice = voice
@@ -1082,15 +1151,24 @@ final class Narrator: NSObject, AVSpeechSynthesizerDelegate {
         u.preUtteranceDelay = part.head && i > 0 ? 0.35 : 0
         u.postUtteranceDelay = part.head ? 0.45 : 0.12
         synth.speak(u)
-        isPlaying = true
-        onPart?(i)
-        nowPlaying()
-        onChange?()
+        if !isPlaying { synth.pauseSpeaking(at: .immediate) }
+    }
+
+    private func finishedPart() {
+        guard isOn else { return }
+        clips[index] = nil
+        if index + 1 < parts.count { speak(index + 1) } else { stop() }
     }
 
     func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        guard isOn, utterance.speechString == parts[index].text else { return }
-        if index + 1 < parts.count { speak(index + 1) } else { stop() }
+        guard isOn, audio == nil, utterance.speechString == parts[index].text else { return }
+        finishedPart()
+    }
+
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        guard player === audio else { return }
+        audio = nil
+        finishedPart()
     }
 
     private func nowPlaying() {
@@ -1135,6 +1213,37 @@ final class Narrator: NSObject, AVSpeechSynthesizerDelegate {
     }
 }
 
+/// The expressive voice: our speak Cloud Function (functions/index.js), which reads a
+/// paragraph with OpenAI's speech model. Requests carry an App Check token and this
+/// install's random id (for its daily allowance).
+enum AIVoice {
+    static let endpoint = URL(string: "https://us-central1-news-lens-4ea95.cloudfunctions.net/speak")!
+
+    struct Failure: Error { let status: Int }
+
+    static var installID: String {
+        let key = "NJInstallID"
+        if let id = UserDefaults.standard.string(forKey: key) { return id }
+        let id = UUID().uuidString
+        UserDefaults.standard.set(id, forKey: key)
+        return id
+    }
+
+    static func speak(_ text: String, head: Bool) async throws -> Data {
+        let token = try await AppCheck.appCheck().token(forcingRefresh: false).token
+        var request = URLRequest(url: endpoint, timeoutInterval: 20)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(token, forHTTPHeaderField: "X-Firebase-AppCheck")
+        request.setValue(installID, forHTTPHeaderField: "X-NL-Device")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["text": String(text.prefix(4000)), "head": head])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200, !data.isEmpty else { throw Failure(status: status) }
+        return data
+    }
+}
+
 /// Lock screen, Control Center and headphone buttons, sent to whichever narrator is on.
 final class RemoteControls {
     static let shared = RemoteControls()
@@ -1156,6 +1265,7 @@ final class PlayerBar: UIView {
     var onSpeed: (() -> Void)?, onClose: (() -> Void)?
     private let play = UIButton(type: .system)
     private let speed = UIButton(type: .system)
+    private let voiceLabel = UILabel()
 
     private static let tint = UIColor { $0.userInterfaceStyle == .dark
         ? UIColor(red: 0.70, green: 0.67, blue: 0.62, alpha: 1)
@@ -1191,10 +1301,13 @@ final class PlayerBar: UIView {
         speed.accessibilityLabel = "Reading speed"
         speed.addAction(UIAction { [weak self] _ in self?.onSpeed?() }, for: .primaryActionTriggered)
         speed.widthAnchor.constraint(equalToConstant: 56).isActive = true
+        voiceLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        voiceLabel.textColor = .secondaryLabel
+        voiceLabel.textAlignment = .center
         let controls = UIStackView(arrangedSubviews: [speed, prev, play, next, close])
         controls.distribution = .equalSpacing
         controls.alignment = .center
-        for v in [rule, controls] as [UIView] {
+        for v in [rule, controls, voiceLabel] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -1206,13 +1319,16 @@ final class PlayerBar: UIView {
             controls.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             controls.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
             controls.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+            voiceLabel.topAnchor.constraint(equalTo: controls.bottomAnchor, constant: 2),
+            voiceLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
         ])
-        update(playing: true, speed: 1)
+        update(playing: true, speed: 1, ai: true)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    func update(playing: Bool, speed rate: Float) {
+    func update(playing: Bool, speed rate: Float, ai: Bool) {
+        voiceLabel.text = ai ? "AI voice" : "Built-in voice"
         play.configuration?.image = UIImage(systemName: playing ? "pause.fill" : "play.fill",
                                             withConfiguration: UIImage.SymbolConfiguration(pointSize: 28, weight: .semibold))
         play.accessibilityLabel = playing ? "Pause" : "Play"
