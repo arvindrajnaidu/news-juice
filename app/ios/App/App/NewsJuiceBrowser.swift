@@ -2,13 +2,17 @@ import UIKit
 import WebKit
 import Capacitor
 
-// News Juice's in-app browser.
+// News Lens's in-app browser.
 //
 // Capacitor's own web view only hosts the app's local UI (www/index.html). News
-// sites open in a separate WKWebView that injects lift/lift.js and lift/reader.js
-// (bundled by `npm run sync` into public/lift) into every page. Swiping the bar at
-// the bottom up runs the lift and slides the clean reader over the page; swiping
-// it down drops the reader again.
+// sites open in a separate WKWebView, with lift/lift.js (bundled by `npm run sync`
+// into public/lift) injected into every page in an isolated content world: it reads
+// the page's DOM, but the site's own scripts can't see or interfere with it.
+//
+// The reader is drawn outside the site, in a second, app-owned web view layered over
+// it that loads only our own www/reader.html. Swiping the bar at the bottom up runs
+// the lift and hands the result to that view; the site underneath is paused (media
+// suspended, touches off) until the reader is swiped down again.
 
 /// Root view controller (created in SceneDelegate) so the local plugin gets registered.
 class MainViewController: CAPBridgeViewController {
@@ -54,6 +58,8 @@ public class NewsJuiceBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
 final class BrowserViewController: UIViewController, WKNavigationDelegate {
     private let startURL: URL
     private var webView: WKWebView!
+    /// The app's own reader page, over the site's web view. No site code runs in it.
+    private var readerView: WKWebView!
     private let titleLabel = UILabel()
     private let listButton = UIButton(type: .system)
     private let backButton = UIButton(type: .system)
@@ -87,20 +93,13 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
 
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
-        for name in ["lift", "reader"] {
-            guard let file = Bundle.main.url(forResource: name, withExtension: "js", subdirectory: "public/lift"),
-                  let source = try? String(contentsOf: file, encoding: .utf8) else {
-                assertionFailure("public/lift/\(name).js missing from the bundle: run `npm run sync` in app/")
-                continue
-            }
+        if let file = Bundle.main.url(forResource: "lift", withExtension: "js", subdirectory: "public/lift"),
+           let source = try? String(contentsOf: file, encoding: .utf8) {
             config.userContentController.addUserScript(
-                WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+                WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        } else {
+            assertionFailure("public/lift/lift.js missing from the bundle: run `npm run sync` in app/")
         }
-        // reader.js saves a site's recipe (the text groups to keep) and reports the
-        // reader's state through this handler.
-        let handler = RecipeHandler()
-        handler.browser = self
-        config.userContentController.add(handler, name: "newsJuice")
         // Sites tailor their markup to the user agent; look like Mobile Safari.
         config.applicationNameForUserAgent = "Version/26.0 Mobile/15E148 Safari/604.1"
 
@@ -111,10 +110,28 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         if #available(iOS 16.4, *) { webView.isInspectable = true }
         #endif
 
+        // reader.js saves a site's recipe (the text groups to keep) and reports the
+        // reader's state and tapped links through this handler.
+        let readerConfig = WKWebViewConfiguration()
+        let handler = RecipeHandler()
+        handler.browser = self
+        readerConfig.userContentController.add(handler, name: "newsJuice")
+        readerView = WKWebView(frame: .zero, configuration: readerConfig)
+        readerView.isOpaque = false
+        readerView.backgroundColor = .clear
+        readerView.scrollView.backgroundColor = .clear
+        readerView.isHidden = true
+        #if DEBUG
+        if #available(iOS 16.4, *) { readerView.isInspectable = true }
+        #endif
+        if let page = Bundle.main.url(forResource: "reader", withExtension: "html", subdirectory: "public") {
+            readerView.loadFileURL(page, allowingReadAccessTo: page.deletingLastPathComponent())
+        }
+
         let topBar = makeTopBar()
         makeLiftBar()
 
-        for v in [topBar, progress, webView!, liftBar] as [UIView] {
+        for v in [topBar, progress, webView!, readerView!, liftBar] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
@@ -133,6 +150,11 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
             webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             webView.bottomAnchor.constraint(equalTo: liftBar.topAnchor),
+
+            readerView.topAnchor.constraint(equalTo: webView.topAnchor),
+            readerView.leadingAnchor.constraint(equalTo: webView.leadingAnchor),
+            readerView.trailingAnchor.constraint(equalTo: webView.trailingAnchor),
+            readerView.bottomAnchor.constraint(equalTo: webView.bottomAnchor),
 
             liftBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             liftBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -165,7 +187,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         // Folds the reader's list of text groups away (Hide) and back (Edit). Shown only
         // while the reader is up; reader.js tells us whether its list is open.
         listButton.addAction(UIAction { [weak self] _ in
-            self?.webView.evaluateJavaScript("window.NewsJuice && NewsJuice.togglePanel()")
+            self?.readerView.evaluateJavaScript("window.NewsJuice && NewsJuice.togglePanel()")
         }, for: .primaryActionTriggered)
         listButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
         listButton.isHidden = true
@@ -253,40 +275,54 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
     }
 
     private func lift() {
+        // lift.js lives in the isolated client world, so that's where it's called.
+        let js = "JSON.stringify(window.NewsJuice ? NewsJuice.lift() : { ok: false, reason: 'lift.js not loaded' })"
+        webView.evaluateJavaScript(js, in: nil, in: .defaultClient) { [weak self] result in
+            guard let self else { return }
+            guard case .success(let value) = result, let json = value as? String,
+                  let data = json.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  obj["ok"] as? Bool == true else {
+                NSLog("NewsJuice lift failed: %@", String(describing: result))
+                self.flash("Nothing to lift on this page")
+                return
+            }
+            let groups = obj["groups"] as? [[String: Any]] ?? []
+            NSLog("NewsJuice lift %@: %d groups, top %@", self.webView.url?.absoluteString ?? "",
+                  groups.count, groups.prefix(4).compactMap { $0["id"] as? String }.joined(separator: " | "))
+            self.showReader(json)
+        }
+    }
+
+    /// Hands a lift result to the app's reader view and pauses the site underneath.
+    private func showReader(_ liftJSON: String, attempt: Int = 0) {
         let recipe = webView.url?.host.flatMap(RecipeHandler.recipe(forHost:))
         let recipeJSON = recipe.flatMap { try? JSONSerialization.data(withJSONObject: $0) }
             .flatMap { String(data: $0, encoding: .utf8) } ?? "null"
-        let js = """
-        (function () {
-          if (!window.NewsJuice || !NewsJuice.lift) return JSON.stringify({ ok: false, reason: 'lift.js not loaded' });
-          var t0 = Date.now();
-          var r = NewsJuice.lift();
-          if (r.ok) NewsJuice.showReader(r, { recipe: \(recipeJSON) });
-          return JSON.stringify({ ok: r.ok, reason: r.reason, ms: Date.now() - t0, title: r.title,
-            groups: r.groups.length, blocks: r.blocks.length, recipe: \(recipeJSON), url: location.href,
-            top: r.groups.slice(0, 5).map(function (g) { return g.id + ' (' + g.chars + ')'; }) });
-        })()
-        """
-        webView.evaluateJavaScript(js) { [weak self] value, error in
+        let js = "window.NewsJuice ? (NewsJuice.showReader(\(liftJSON), { recipe: \(recipeJSON) }), true) : false"
+        readerView.evaluateJavaScript(js) { [weak self] value, _ in
             guard let self else { return }
-            let summary = (value as? String) ?? "error: \(error?.localizedDescription ?? "unknown")"
-            NSLog("NewsJuice lift %@", summary)
-            if let data = summary.data(using: .utf8),
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               obj["ok"] as? Bool == true {
-                self.readerUp = true
-                self.listButton.isHidden = false
-                if let url = self.webView.url?.absoluteString { self.liftedPages.insert(url) }
-                self.updateLiftLabel()
-            } else {
-                self.flash("Nothing to lift on this page")
+            guard value as? Bool == true else {
+                // The reader page is still loading (only possible right after opening).
+                if attempt < 10 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.showReader(liftJSON, attempt: attempt + 1) }
+                }
+                return
             }
+            self.readerView.isHidden = false
+            self.webView.isUserInteractionEnabled = false
+            self.webView.pauseAllMediaPlayback()
+            self.webView.setAllMediaPlaybackSuspended(true)
+            self.readerUp = true
+            self.listButton.isHidden = false
+            if let url = self.webView.url?.absoluteString { self.liftedPages.insert(url) }
+            self.updateLiftLabel()
         }
     }
 
     private func dropReader() {
         // reader.js closes on Escape.
-        webView.evaluateJavaScript("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))")
+        readerView.evaluateJavaScript("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))")
         readerClosed()
     }
 
@@ -308,10 +344,17 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
     }
 
     /// reader.js: the reader went away (its handle was tapped, or we dropped it).
+    /// Wakes the site underneath and hides the reader view once its sheet has slid away.
     func readerClosed() {
         readerUp = false
         listButton.isHidden = true
+        webView.isUserInteractionEnabled = true
+        webView.setAllMediaPlaybackSuspended(false)
         updateLiftLabel()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self, !self.readerUp else { return }
+            self.readerView.isHidden = true
+        }
     }
 
     private func flash(_ text: String) {
@@ -368,9 +411,13 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
             .replacingOccurrences(of: "[^A-Za-z0-9]+", with: "-", options: .regularExpression)
             .prefix(80)
         let js = "(function () { var t0 = Date.now(); var r = NewsJuice.lift(); r.ms = Date.now() - t0; return JSON.stringify(r, null, 2); })()"
-        webView.evaluateJavaScript(js) { [weak self] value, error in
+        webView.evaluateJavaScript(js, in: nil, in: .defaultClient) { [weak self] result in
             guard let self else { return }
-            let json = (value as? String) ?? "{\"error\": \"\(error?.localizedDescription ?? "unknown")\"}"
+            let json: String
+            switch result {
+            case .success(let value): json = value as? String ?? "null"
+            case .failure(let error): json = "{\"error\": \"\(error.localizedDescription)\"}"
+            }
             try? json.write(to: docs.appendingPathComponent("lift-\(page).json"), atomically: true, encoding: .utf8)
             NSLog("NewsJuice debug lift saved lift-%@.json", String(page))
             guard UserDefaults.standard.bool(forKey: "NJCapture"),

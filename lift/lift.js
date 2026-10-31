@@ -29,6 +29,12 @@
     return r.width === 0 && r.height === 0;
   }
 
+  function isOverlay(el, style) {
+    if (style.position === 'fixed' || style.position === 'sticky') return true;
+    if (el.tagName === 'DIALOG') return true;
+    return el.getAttribute('role') === 'dialog' || el.getAttribute('aria-modal') === 'true';
+  }
+
   // A child element that reads as part of its parent's line of text: inline
   // elements, line breaks, and short floated letters (drop caps).
   function flowsInline(n, style) {
@@ -105,7 +111,10 @@
     var walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
       acceptNode: function (el) {
         if (SKIP_TAGS.test(el.tagName) || el.id === 'news-juice-reader') return NodeFilter.FILTER_REJECT;
-        if (isHidden(el, getComputedStyle(el))) return NodeFilter.FILTER_REJECT;
+        var st = getComputedStyle(el);
+        if (isHidden(el, st)) return NodeFilter.FILTER_REJECT;
+        // Overlays (cookie banners, sign-in gates, sticky ads, players) aren't page text.
+        if (isOverlay(el, st)) return NodeFilter.FILTER_REJECT;
         return NodeFilter.FILTER_ACCEPT;
       },
     });
