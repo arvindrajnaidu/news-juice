@@ -8,7 +8,7 @@
 //
 // Runs in any browser context (desktop page, bookmarklet, mobile webview).
 // Exposes window.NewsJuice.lift(options) -> result object:
-//   { ok, url, host, title,
+//   { ok, url, host, title, article,
 //     groups: [{ id, size, bold, italic, family, link, chars, count, sample }],  // most text first
 //     blocks: [{ g, text, tag, href?, links? }] }                                // page order
 // A block that sits inside a link has its `href`; links within a block's text are
@@ -158,6 +158,12 @@
     return og ? og.content : document.title;
   }
 
+  // Article pages say so in their Open Graph type; section fronts say "website".
+  function isArticle() {
+    var og = document.querySelector('meta[property="og:type"]');
+    return !!og && /article/i.test(og.content || '');
+  }
+
   function lift(options) {
     var opts = Object.assign({}, DEFAULTS, options || {});
     var blocks = collectBlocks(document.body, opts);
@@ -168,6 +174,7 @@
       url: location.href,
       host: location.hostname.replace(/^www\./, ''),
       title: pickTitle(),
+      article: isArticle(),
       groups: groups,
       blocks: blocks.map(function (b) {
         var out = { g: b.g, text: b.text, tag: b.tag };

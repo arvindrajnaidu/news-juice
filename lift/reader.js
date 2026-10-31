@@ -62,10 +62,18 @@
     return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
   }
 
-  // With nothing saved, keep the group with the most prose (not a link list).
+  // With nothing saved, keep the group with the most prose (not a link list). On a
+  // section front whose headline list clearly outweighs any prose, keep the headlines.
   function defaultKeep(r) {
-    var g = r.groups.filter(function (x) { return !x.link; })[0] || r.groups[0];
+    var prose = r.groups.filter(function (x) { return !x.link; })[0];
+    var headlines = r.groups.filter(function (x) { return x.link && x.chars / x.count >= 30; })[0];
+    if (!r.article && headlines && (!prose || headlines.chars > 2 * prose.chars)) return [headlines.id];
+    var g = prose || r.groups[0];
     return g ? [g.id] : [];
+  }
+
+  function proseGroup(r) {
+    return r.groups.filter(function (x) { return !x.link; })[0];
   }
 
   function storedRecipe(r, given) {
@@ -176,6 +184,14 @@
     // it too (the list still opens this time so it can be adjusted).
     var keep = saved || defaultKeep(r);
     if (!saved && elsewhere.length) saveRecipe(r.host, elsewhere.concat(keep));
+    // On an article, a recipe that only matches link lists here (the nav on an article
+    // can look just like the headlines on a section front) still needs the body text.
+    var linkOnly = saved && saved.every(function (id) { return r.groups.some(function (g) { return g.id === id && g.link; }); });
+    var body = proseGroup(r);
+    if (r.article && linkOnly && body) {
+      keep = keep.concat(body.id);
+      saveRecipe(r.host, elsewhere.concat(keep));
+    }
 
     var host = document.createElement('div');
     host.id = 'news-juice-reader';
