@@ -28,8 +28,22 @@
   .hint:empty { display: none; }
   button { font-size: 17px; font-weight: 600; padding: 12px 18px; border: 0; border-radius: 10px; background: var(--accent); color: #000; }
   h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 28px 0 8px; }
-  ul { list-style: none; padding: 0; margin: 0; }
-  li a { display: block; padding: 12px 0; border-bottom: 1px solid var(--line); color: inherit; text-decoration: none; }
+  ul { list-style: none; padding: 0; margin: 0 -16px; }
+  /* Each row slides left over a red Delete action, like Mail. */
+  .row { position: relative; overflow: hidden; border-bottom: 1px solid var(--line); transition: max-height .25s ease, opacity .25s ease; max-height: 80px; }
+  .row.gone { max-height: 0; opacity: 0; border-bottom-width: 0; }
+  .row a { position: relative; z-index: 1; display: block; padding: 12px 16px; background: var(--bg); color: inherit; text-decoration: none;
+           transition: transform .25s cubic-bezier(.2,.9,.2,1); touch-action: pan-y; -webkit-user-select: none; user-select: none; }
+  .row a.dragging { transition: none; }
+  .row small { display: block; font-size: 12px; color: var(--muted); }
+  .row .del { position: absolute; top: 0; right: 0; bottom: 0; width: 100%; padding: 0 22px; border-radius: 0; background: #e5383b; color: #fff;
+              font-size: 16px; font-weight: 600; text-align: right; }
+  .empty { color: var(--muted); font-size: 15px; }
+  .toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 16px); display: flex; align-items: center; gap: 12px;
+           padding: 12px 12px 12px 16px; border-radius: 14px; background: var(--fg); color: var(--bg); font-size: 15px; z-index: 2; }
+  .toast span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .toast button { padding: 8px 14px; font-size: 15px; }
+  .toast[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -46,25 +60,11 @@
   <button type="submit">Go</button>
 </form>
 <p class="hint" id="hint" role="status"></p>
-<h2>Try</h2>
-<ul id="sites">
-  <li><a href="https://www.ndtv.com/india">NDTV India</a></li>
-  <li><a href="https://www.thehindu.com/news/national/">The Hindu</a></li>
-  <li><a href="https://indianexpress.com/section/india/">Indian Express</a></li>
-  <li><a href="https://www.theguardian.com/world">The Guardian</a></li>
-  <li><a href="https://apnews.com/world-news">AP News</a></li>
-  <li><a href="https://edition.cnn.com/world">CNN</a></li>
-  <li><a href="https://www.bbc.com/news">BBC News</a></li>
-  <li><a href="https://www.reuters.com/world/">Reuters</a></li>
-  <li><a href="https://www.nytimes.com/section/world">The New York Times</a></li>
-  <li><a href="https://www.washingtonpost.com/world/">The Washington Post</a></li>
-  <li><a href="https://www.aljazeera.com/news/">Al Jazeera</a></li>
-  <li><a href="https://www.npr.org/sections/news/">NPR</a></li>
-  <li><a href="https://timesofindia.indiatimes.com/india">Times of India</a></li>
-  <li><a href="https://www.hindustantimes.com/india-news">Hindustan Times</a></li>
-  <li><a href="https://www.indiatoday.in/india">India Today</a></li>
-  <li><a href="https://www.theverge.com/tech">The Verge</a></li>
-</ul>
+<h2>Your sites</h2>
+<!-- Filled from the saved list (seeded with SEED_SITES on first launch). -->
+<ul id="sites"></ul>
+<p class="empty" id="empty" hidden>No sites yet. Type one above and it'll be added here.</p>
+<div class="toast" id="toast" hidden><span id="toast-text"></span><button type="button" id="undo">Undo</button></div>
 <script>
   var field = document.getElementById('url');
   var clear = document.getElementById('clear');
@@ -87,6 +87,165 @@
       return null;
     }
   }
+
+  // ---- Your sites: a list kept on this device, keyed by hostname without "www.". ----
+  var SEED_SITES = [
+    ['NDTV India', 'https://www.ndtv.com/india'],
+    ['The Hindu', 'https://www.thehindu.com/news/national/'],
+    ['Indian Express', 'https://indianexpress.com/section/india/'],
+    ['The Guardian', 'https://www.theguardian.com/world'],
+    ['AP News', 'https://apnews.com/world-news'],
+    ['CNN', 'https://edition.cnn.com/world'],
+    ['BBC News', 'https://www.bbc.com/news'],
+    ['Reuters', 'https://www.reuters.com/world/'],
+    ['The New York Times', 'https://www.nytimes.com/section/world'],
+    ['The Washington Post', 'https://www.washingtonpost.com/world/'],
+    ['Al Jazeera', 'https://www.aljazeera.com/news/'],
+    ['NPR', 'https://www.npr.org/sections/news/'],
+    ['Times of India', 'https://timesofindia.indiatimes.com/india'],
+    ['Hindustan Times', 'https://www.hindustantimes.com/india-news'],
+    ['India Today', 'https://www.indiatoday.in/india'],
+    ['The Verge', 'https://www.theverge.com/tech'],
+  ];
+  var STORE = 'newslens:sites';
+  var list = document.getElementById('sites');
+
+  function hostOf(url) {
+    try { return new URL(url).hostname.replace(/^www\./, ''); } catch (e) { return ''; }
+  }
+
+  function loadSites() {
+    try {
+      var saved = JSON.parse(localStorage.getItem(STORE) || 'null');
+      if (Array.isArray(saved)) return saved;
+    } catch (e) { /* fall through to the seed */ }
+    return SEED_SITES.map(function (s) { return { name: s[0], url: s[1], host: hostOf(s[1]) }; });
+  }
+  var sites = loadSites();
+
+  function saveSites() {
+    try { localStorage.setItem(STORE, JSON.stringify(sites)); } catch (e) { /* storage blocked */ }
+  }
+
+  function render() {
+    list.innerHTML = sites.map(function (s, i) {
+      return '<li class="row" data-i="' + i + '"><button type="button" class="del" tabindex="-1">Delete</button>' +
+        '<a href="' + esc(s.url) + '">' + esc(s.name) + (s.name !== s.host ? '<small>' + esc(s.host) + '</small>' : '') + '</a></li>';
+    }).join('');
+    document.getElementById('empty').hidden = sites.length > 0;
+  }
+
+  function esc(t) {
+    return String(t).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
+  }
+
+  // Called by the app once a page opened from here has loaded (after any redirect),
+  // with its address and the site's own name: a new site goes to the top of the list.
+  window.siteVisited = function (info) {
+    var host = hostOf(info.url);
+    if (!host) return;
+    var name = (info.name || '').trim() || host;
+    var known = sites.filter(function (s) { return s.host === host; })[0];
+    if (known) {
+      if (known.auto && known.name === known.host && name !== host) { known.name = name; saveSites(); render(); }
+      return;
+    }
+    sites.unshift({ name: name, url: 'https://' + new URL(info.url).hostname + '/', host: host, auto: true });
+    saveSites();
+    render();
+  };
+
+  // ---- Swipe a row left for Delete; a long swipe deletes straight away. ----
+  var drag = null;
+  var openRow = null;
+  var lastRemoved = null;
+  var toastTimer = null;
+
+  function slide(row, x, animate) {
+    var a = row.querySelector('a');
+    a.classList.toggle('dragging', !animate);
+    a.style.transform = x ? 'translateX(' + x + 'px)' : '';
+  }
+  function closeOpenRow() {
+    if (openRow) { slide(openRow, 0, true); openRow = null; }
+  }
+  function removeRow(row) {
+    var i = +row.getAttribute('data-i');
+    var site = sites[i];
+    row.classList.add('gone');
+    setTimeout(function () {
+      sites.splice(i, 1);
+      saveSites();
+      render();
+    }, 250);
+    openRow = null;
+    lastRemoved = { site: site, index: i };
+    forgetRecipe(site.host);
+    showToast('Removed ' + site.name);
+  }
+  function showToast(text) {
+    document.getElementById('toast-text').textContent = text;
+    document.getElementById('toast').hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { document.getElementById('toast').hidden = true; lastRemoved = null; }, 4000);
+  }
+  document.getElementById('undo').addEventListener('click', function () {
+    if (!lastRemoved) return;
+    sites.splice(Math.min(lastRemoved.index, sites.length), 0, lastRemoved.site);
+    lastRemoved = null;
+    saveSites();
+    render();
+    document.getElementById('toast').hidden = true;
+  });
+  // A deleted site forgets its saved lift choices too, so adding it back starts fresh.
+  function forgetRecipe(host) {
+    var cap = window.Capacitor;
+    if (cap && cap.isNativePlatform && cap.isNativePlatform()) {
+      cap.nativePromise('NewsJuiceBrowser', 'forgetSite', { host: host }).catch(function () {});
+    }
+  }
+
+  list.addEventListener('touchstart', function (e) {
+    var row = e.target.closest('.row');
+    if (!row || e.target.closest('.del')) return;
+    if (openRow && openRow !== row) closeOpenRow();
+    var t = e.touches[0];
+    drag = { row: row, x0: t.clientX, y0: t.clientY, dx: 0, base: row === openRow ? -88 : 0, horizontal: null };
+  }, { passive: true });
+  list.addEventListener('touchmove', function (e) {
+    if (!drag) return;
+    var t = e.touches[0];
+    var dx = t.clientX - drag.x0, dy = t.clientY - drag.y0;
+    if (drag.horizontal === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) drag.horizontal = Math.abs(dx) > Math.abs(dy);
+    if (!drag.horizontal) return;
+    e.preventDefault();
+    drag.dx = dx;
+    slide(drag.row, Math.min(0, drag.base + dx), false);
+  }, { passive: false });
+  list.addEventListener('touchend', function () {
+    if (!drag) return;
+    var d = drag;
+    drag = null;
+    if (!d.horizontal) return;
+    d.row.dataset.swiped = '1'; // the click that follows a swipe mustn't open the site
+    var x = d.base + d.dx;
+    var width = d.row.offsetWidth;
+    if (x < -width * 0.55) { slide(d.row, -width, true); removeRow(d.row); }
+    else if (x < -44) { slide(d.row, -88, true); openRow = d.row; }
+    else { slide(d.row, 0, true); if (openRow === d.row) openRow = null; }
+  });
+
+  list.addEventListener('click', function (e) {
+    var row = e.target.closest('.row');
+    if (!row) return;
+    e.preventDefault();
+    if (e.target.closest('.del')) { removeRow(row); return; }
+    if (row.dataset.swiped) { delete row.dataset.swiped; return; }
+    if (openRow) { closeOpenRow(); return; } // a tap closes an open row rather than opening a site
+    openURL(sites[+row.getAttribute('data-i')].url);
+  });
+
+  render();
 
   function openURL(url) {
     // No bundler here, so call the native bridge directly instead of registerPlugin().
@@ -126,12 +285,6 @@
   document.addEventListener('touchstart', function (e) {
     if (document.activeElement === field && !e.target.closest('form')) field.blur();
   }, { passive: true });
-  document.getElementById('sites').addEventListener('click', function (e) {
-    var a = e.target.closest('a');
-    if (!a) return;
-    e.preventDefault();
-    openURL(a.href);
-  });
 </script>
 </body>
 </html>

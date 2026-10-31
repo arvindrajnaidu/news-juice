@@ -40,6 +40,7 @@ public class NewsJuiceBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
     public let jsName = "NewsJuiceBrowser"
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "open", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "forgetSite", returnType: CAPPluginReturnPromise),
     ]
 
     @objc func open(_ call: CAPPluginCall) {
@@ -52,6 +53,13 @@ public class NewsJuiceBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
             self.bridge?.viewController?.present(BrowserViewController(url: url), animated: true)
             call.resolve()
         }
+    }
+
+    /// The start screen removed a site: forget its saved lift choices too.
+    @objc func forgetSite(_ call: CAPPluginCall) {
+        guard let host = call.getString("host") else { call.reject("host is required"); return }
+        RecipeHandler.forget(host: host)
+        call.resolve()
     }
 }
 
@@ -77,6 +85,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
     private var liftOnLoad = false
     /// Pages that were showing the reader, so going back to one lifts it again.
     private var liftedPages = Set<String>()
+    /// Whether the start screen has been told which site this browser opened.
+    private var siteReported = false
 
     private static let bar = UIColor { $0.userInterfaceStyle == .dark
         ? UIColor(red: 0.13, green: 0.125, blue: 0.11, alpha: 1)
@@ -376,6 +386,23 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         webView.goBack()
     }
 
+    /// Tells the start screen which site was opened (its address after any redirect, and
+    /// the site's own name), so a new site joins the list there.
+    private func reportSiteOnce() {
+        guard !siteReported, let url = webView.url else { return }
+        siteReported = true
+        let js = """
+        JSON.stringify({ url: location.href, name: ((document.querySelector('meta[property="og:site_name"]') ||
+          document.querySelector('meta[name="application-name"]') || {}).content || '') })
+        """
+        webView.evaluateJavaScript(js, in: nil, in: .defaultClient) { [weak self] result in
+            let info = (try? result.get()) as? String
+                ?? "{\"url\": \"\(url.absoluteString)\", \"name\": \"\"}"
+            let start = (self?.presentingViewController as? CAPBridgeViewController)?.webView
+            start?.evaluateJavaScript("window.siteVisited && siteVisited(\(info))")
+        }
+    }
+
     private var siteHasRecipe: Bool {
         webView.url?.host.flatMap(RecipeHandler.recipe(forHost:)) != nil
     }
@@ -400,6 +427,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        reportSiteOnce()
         let backToLifted = webView.url.map { liftedPages.contains($0.absoluteString) } ?? false
         if liftOnLoad || (backToLifted && siteHasRecipe) {
             // A beat for late paragraphs to render before lifting.
@@ -475,6 +503,12 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
 final class RecipeHandler: NSObject, WKScriptMessageHandler {
     private static let key = "NJRecipes"
     weak var browser: BrowserViewController?
+
+    static func forget(host: String) {
+        var all = UserDefaults.standard.dictionary(forKey: key) as? [String: [String]] ?? [:]
+        all[normalize(host)] = nil
+        UserDefaults.standard.set(all, forKey: key)
+    }
 
     static func recipe(forHost host: String) -> [String]? {
         let all = UserDefaults.standard.dictionary(forKey: key) as? [String: [String]]

@@ -32,6 +32,7 @@
     '.read .nj-list{padding:22px 24px 0}',
     '.nj-card{display:flex;flex-direction:column;align-items:flex-start;gap:6px;width:100%;box-sizing:border-box;',
     '  overflow:hidden;border:0;text-align:left;font:inherit;color:' + INK + ';cursor:pointer;-webkit-tap-highlight-color:transparent;',
+    '  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;',
     '  max-height:400px;padding:12px 14px;margin:0 0 10px;border-radius:10px;',
     '  background:rgba(255,255,255,.35);opacity:.62;transform:none;box-shadow:none;',
     '  transition:transform .45s ' + SPRING + ' var(--d,0ms),box-shadow .45s ease var(--d,0ms),background-color .45s ease,',
