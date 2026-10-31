@@ -5,6 +5,7 @@ import AVFoundation
 import MediaPlayer
 import NaturalLanguage
 import FirebaseAppCheck
+import CryptoKit
 
 // News Lens's in-app browser.
 //
@@ -1134,7 +1135,7 @@ final class Narrator: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelega
     /// The AI audio for part i: already fetched, under way, or fetched now.
     @MainActor private func clip(_ i: Int) async throws -> Data {
         if let data = clips[i] { return data }
-        let task = fetches[i] ?? Task { try await AIVoice.speak(parts[i].text, head: parts[i].head) }
+        let task = fetches[i] ?? Task { try await AIVoice.speak(parts[i].text, head: parts[i].head, story: title, site: site) }
         fetches[i] = task
         defer { fetches[i] = nil }
         let data = try await task.value
@@ -1229,14 +1230,44 @@ enum AIVoice {
         return id
     }
 
-    static func speak(_ text: String, head: Bool) async throws -> Data {
+    static func speak(_ text: String, head: Bool, story: String, site: String) async throws -> Data {
+        let spoken = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let story = String(story.prefix(200))
+        // Everything that shapes the audio, so a cached reading matches a fresh one.
+        let key = ClipCache.key([ClipCache.version, voice ?? "", head ? "head" : "", story, site, spoken])
+        if let data = ClipCache.get(key) { return data }
+        let data = try await fetch(spoken, head: head, story: story, site: site)
+        ClipCache.put(key, data)
+        #if DEBUG
+        // -NJSaveClips YES: keep each reading in Documents too, for comparing voices.
+        if UserDefaults.standard.bool(forKey: "NJSaveClips") {
+            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            try? data.write(to: docs.appendingPathComponent("clip-\(voice ?? "default")-\(key.prefix(8)).mp3"))
+        }
+        #endif
+        return data
+    }
+
+    /// The voice to ask for; nil leaves it to the function. Debug builds can pick one
+    /// with -NJVoice <name> to compare voices.
+    private static var voice: String? {
+        #if DEBUG
+        return UserDefaults.standard.string(forKey: "NJVoice")
+        #else
+        return nil
+        #endif
+    }
+
+    private static func fetch(_ text: String, head: Bool, story: String, site: String) async throws -> Data {
         let token = try await AppCheck.appCheck().token(forcingRefresh: false).token
         var request = URLRequest(url: endpoint, timeoutInterval: 20)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(token, forHTTPHeaderField: "X-Firebase-AppCheck")
         request.setValue(installID, forHTTPHeaderField: "X-NL-Device")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["text": String(text.prefix(4000)), "head": head])
+        var body: [String: Any] = ["text": String(text.prefix(4000)), "head": head, "story": story, "site": site]
+        if let voice { body["voice"] = voice }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200, !data.isEmpty else { throw Failure(status: status) }
@@ -1335,5 +1366,50 @@ final class PlayerBar: UIView {
         let text = rate == rate.rounded() ? "\(Int(rate))×" : "\(rate)×"
         speed.configuration?.attributedTitle = AttributedString(text, attributes: AttributeContainer(
             [.font: UIFont.monospacedDigitSystemFont(ofSize: 15, weight: .semibold)]))
+    }
+}
+
+/// Readings kept on the phone (Caches/tts), so playing something again costs nothing.
+/// Keyed by a SHA-256 of what shapes the audio; trimmed oldest-first to 100 MB.
+enum ClipCache {
+    /// Bump when the server's voice or direction changes, so old readings aren't reused.
+    static let version = "anchor-1"
+    private static let limit = 100 * 1024 * 1024
+    private static let folder: URL = {
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("tts", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
+    static func key(_ parts: [String]) -> String {
+        SHA256.hash(data: Data(parts.joined(separator: "\u{1F}").utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func get(_ key: String) -> Data? {
+        let file = folder.appendingPathComponent(key + ".mp3")
+        guard let data = try? Data(contentsOf: file) else { return nil }
+        // Touch it, so trimming keeps what's been played recently.
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
+        return data
+    }
+
+    static func put(_ key: String, _ data: Data) {
+        try? data.write(to: folder.appendingPathComponent(key + ".mp3"))
+        trim()
+    }
+
+    private static func trim() {
+        let fm = FileManager.default
+        let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey]
+        guard var files = try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: keys) else { return }
+        let info = { (url: URL) in try? url.resourceValues(forKeys: Set(keys)) }
+        var total = files.reduce(0) { $0 + (info($1)?.fileSize ?? 0) }
+        guard total > limit else { return }
+        files.sort { (info($0)?.contentModificationDate ?? .distantPast) < (info($1)?.contentModificationDate ?? .distantPast) }
+        for file in files where total > limit {
+            total -= info(file)?.fileSize ?? 0
+            try? fm.removeItem(at: file)
+        }
     }
 }
