@@ -36,8 +36,10 @@
            transition: transform .25s cubic-bezier(.2,.9,.2,1); touch-action: pan-y; -webkit-user-select: none; user-select: none; }
   .row a.dragging { transition: none; }
   .row small { display: block; font-size: 12px; color: var(--muted); }
-  .row .del { position: absolute; top: 0; right: 0; bottom: 0; width: 100%; padding: 0 22px; border-radius: 0; background: #e5383b; color: #fff;
-              font-size: 16px; font-weight: 600; text-align: right; }
+  .row .del { position: absolute; top: 0; right: 0; bottom: 0; width: 100%; padding: 0; border-radius: 0; background: #e5383b; color: #fff;
+              display: flex; justify-content: flex-end; align-items: center; }
+  /* The trash icon sits centred in the 88px a swipe reveals. */
+  .row .del span { width: 88px; display: flex; justify-content: center; align-items: center; }
   .empty { color: var(--muted); font-size: 15px; }
   .toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 16px); display: flex; align-items: center; gap: 12px;
            padding: 12px 12px 12px 16px; border-radius: 14px; background: var(--fg); color: var(--bg); font-size: 15px; z-index: 2; }
@@ -108,6 +110,9 @@
     ['The Verge', 'https://www.theverge.com/tech'],
   ];
   var STORE = 'newslens:sites';
+  var TRASH = '<span><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path>' +
+    '<path d="M6 6l1 14h10l1-14"></path><path d="M10 11v6M14 11v6"></path></svg></span>';
   var list = document.getElementById('sites');
 
   function hostOf(url) {
@@ -129,7 +134,7 @@
 
   function render() {
     list.innerHTML = sites.map(function (s, i) {
-      return '<li class="row" data-i="' + i + '"><button type="button" class="del" tabindex="-1">Delete</button>' +
+      return '<li class="row" data-i="' + i + '"><button type="button" class="del" tabindex="-1" aria-label="Delete">' + TRASH + '</button>' +
         '<a href="' + esc(s.url) + '">' + esc(s.name) + (s.name !== s.host ? '<small>' + esc(s.host) + '</small>' : '') + '</a></li>';
     }).join('');
     document.getElementById('empty').hidden = sites.length > 0;
