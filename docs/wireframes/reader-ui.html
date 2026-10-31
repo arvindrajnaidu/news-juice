@@ -57,6 +57,13 @@
   .small .status { height: 12px; }
   .site { background: #fff; }
   .site .blk { background: #ddd; border-radius: 4px; margin: 0 0 6px; }
+  .kc { flex: none; font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 999px; background: #e6dfd3; color: #7a7368; }
+  .kc.on { background: var(--accent); color: #000; }
+  .drawer { position: absolute; left: 0; right: 0; background: #fff; border-top-left-radius: 16px; border-top-right-radius: 16px; box-shadow: 0 -6px 20px rgba(0,0,0,.16); padding: 6px 14px 8px; font-size: 12px; }
+  .peek { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .peek b { flex: 1; }
+  .hl { background: #fdf0c8; border-radius: 4px; box-shadow: 0 0 0 4px #fdf0c8; }
+  .a2 .page { padding-bottom: 0; }
 </style>
 </head>
 <body>
@@ -64,6 +71,56 @@
 <p class="intro">Fixes the three problems: (1) Done and ‹ crammed together at the top look odd; (2) “Edit” doesn’t say it’s how you choose what gets lifted; (3) “Text on this page” sits inside the article and reads like part of it. In all three, the controls use system UI (sans-serif, grey bars, switches) and the article keeps the serif paper look, so the two never blur.</p>
 
 <div class="row">
+
+  <div class="opt a2" style="width:100%">
+    <h2>A2 · Toolbar + live Lens drawer (A, revised)</h2>
+    <p class="tag">Keeps today's Keep/Cull. The drawer never covers the article: change groups and watch the text update above it.</p>
+    <div class="row" style="gap:16px">
+      <div><div class="phone">
+        <div class="status"></div>
+        <div class="bar"><div class="pill">🔒 ndtv.com</div></div>
+        <div class="page">
+          <div class="h">Goa Cop Sexually Assaults Minor Girl…</div>
+          <div class="ln"></div><div class="ln m"></div><div class="ln"></div><div class="ln s"></div><div class="gap"></div>
+          <div class="ln"></div><div class="ln"></div><div class="ln m"></div><div class="ln s"></div><div class="gap"></div>
+          <div class="ln"></div><div class="ln m"></div><div class="ln"></div><div class="ln s"></div><div class="gap"></div>
+          <div class="ln"></div><div class="ln m"></div>
+        </div>
+        <div class="drawer" style="bottom:52px"><div class="grab"></div><div class="peek"><b>Lens · keeping 2 of 14</b><span style="color:var(--blue)">Adjust ⌃</span></div></div>
+        <div class="bar bottom"><div class="ico">‹</div><div class="ico">›</div><div class="ico on">◎</div><div class="ico">✕</div></div>
+      </div><div class="cap">Reading: the Lens drawer rests as a slim bar</div></div>
+
+      <div><div class="phone">
+        <div class="status"></div>
+        <div class="bar"><div class="pill">🔒 ndtv.com</div></div>
+        <div class="page">
+          <div class="h">Goa Cop Sexually Assaults…</div>
+          <div class="ln"></div><div class="ln m"></div><div class="ln s"></div><div class="gap"></div>
+          <div style="font-size:10px;color:#888;margin-bottom:4px" class="hl">Photo: Goa police headquarters (caption)</div><div class="gap"></div>
+          <div class="ln"></div><div class="ln m"></div>
+        </div>
+        <div class="drawer" style="bottom:52px;height:300px">
+          <div class="grab"></div>
+          <div class="peek" style="margin-bottom:6px"><b>Lens for ndtv.com · saved for this site</b><span style="color:var(--blue)">Done</span></div>
+          <div class="g"><div class="t"><b>A woman aide of the accused…</b><i>Article text · 18px · 28</i></div><div class="kc on">Keep</div></div>
+          <div class="g"><div class="t"><b>Photo: Goa police headquarters</b><i>Captions · 14px · 2</i></div><div class="kc on">Keep</div></div>
+          <div class="g"><div class="t"><b>Trending · Binance hack…</b><i>Link list · 13px · 27</i></div><div class="kc">Cull</div></div>
+          <div class="g"><div class="t"><b>Live TV · Latest · India</b><i>Menu links · 15px · 27</i></div><div class="kc">Cull</div></div>
+        </div>
+        <div class="bar bottom"><div class="ico">‹</div><div class="ico">›</div><div class="ico on">◎</div><div class="ico">✕</div></div>
+      </div><div class="cap">Adjusting: half-height drawer; article stays live above</div></div>
+
+      <ul class="note" style="width:300px;margin-top:0">
+        <li><b>No toggles:</b> the same Keep/Cull rows as today; tap a row to flip it.</li>
+        <li><b>Never in the way:</b> the drawer is half height, so the article above updates as you tap; drag it down to a slim “Lens · keeping 2 of 14” bar, drag up or tap “Adjust” to open. No dismiss-and-reopen.</li>
+        <li><b>Shows what a row is:</b> tapping a row also scrolls the article to that text and briefly highlights it, so “Captions” or “Menu links” is obvious.</li>
+        <li><b>Clear it's a control:</b> white system panel, sans-serif, title says “Lens for ndtv.com · saved for this site”.</li>
+        <li><b>Toolbar:</b> Back, Forward, Lift ◎ (lit while reading), Close. Lens has its own drawer, so no separate ⚙︎.</li>
+        <li><b>Plain names</b> (Article text, Captions, Link list, Menu links) guessed from size, links and length; font size kept as a detail.</li>
+        <li><b>New sites:</b> the drawer opens half way the first time; after that it rests as the slim bar.</li>
+      </ul>
+    </div>
+  </div>
 
   <div class="opt">
     <h2>A · Browser toolbar + “Lens” sheet</h2>
