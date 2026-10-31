@@ -462,12 +462,15 @@
     };
     var onKey = function (e) { if (e.key === 'Escape') close(); };
     if (!inApp()) document.addEventListener('keydown', onKey);
-    current = { toRead: toRead, toPick: toPick, close: close };
+    // What sharing sends: the site's whole recipe, with the current picks for this page.
+    var recipe = function () { return elsewhere.concat(keep); };
+    current = { toRead: toRead, toPick: toPick, close: close, recipe: recipe };
   }
 
   window.NewsJuice = window.NewsJuice || {};
   window.NewsJuice.showReader = showReader;
   window.NewsJuice.renderHTML = renderHTML;
+  window.NewsJuice.currentRecipe = function () { return current ? current.recipe() : null; };
   window.NewsJuice.setMode = function (m) {
     if (!current) return;
     if (m === 'read') current.toRead(); else current.toPick();

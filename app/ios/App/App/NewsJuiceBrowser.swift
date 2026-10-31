@@ -22,6 +22,7 @@ class MainViewController: CAPBridgeViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        ShareLinks.showPending()
         #if DEBUG
         // `xcrun simctl launch <device> com.buzzie.newslens -NJOpenURL https://...`
         // opens a page straight away, for testing.
@@ -80,6 +81,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     private let subtitleLabel = UILabel()
     private let homeButton = UIButton(type: .system)
     private let changeButton = UIButton(type: .system)
+    private let shareButton = UIButton(type: .system)
     private let liftButton = UIButton(type: .system)
     /// The app bar under the page that holds the Lift button, so it never covers the site.
     private let bottomBar = UIView()
@@ -109,9 +111,11 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         : UIColor(red: 0.42, green: 0.39, blue: 0.345, alpha: 1) }
     private static let ink = UIColor(red: 0.114, green: 0.106, blue: 0.094, alpha: 1)
 
-    init(url: URL) {
+    /// filter: filter the first page as soon as it loads (a shared filter was just added).
+    init(url: URL, filter: Bool = false) {
         startURL = url
         super.init(nibName: nil, bundle: nil)
+        liftOnLoad = filter
         modalPresentationStyle = .fullScreen
     }
 
@@ -275,8 +279,9 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         iconButton(changeButton, "slider.horizontal.3", "Change filter") { [weak self] in
             self?.readerView.evaluateJavaScript("window.NewsJuice && NewsJuice.setMode('pick')")
         }
+        iconButton(shareButton, "square.and.arrow.up", "Share filter") { [weak self] in self?.shareFilter() }
         iconButton(homeButton, "house", "Home") { [weak self] in self?.dismiss(animated: true) }
-        let right = UIStackView(arrangedSubviews: [pageButton, changeButton, homeButton])
+        let right = UIStackView(arrangedSubviews: [shareButton, pageButton, changeButton, homeButton])
         right.spacing = 0
 
         for v in [backButton, titles, right, rule] as [UIView] {
@@ -288,9 +293,11 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             backButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             backButton.widthAnchor.constraint(equalToConstant: 44),
             backButton.heightAnchor.constraint(equalToConstant: 44),
-            titles.centerXAnchor.constraint(equalTo: bar.centerXAnchor),
+            // Centred on the bar when there's room, else in the space between the buttons.
+            { let c = titles.centerXAnchor.constraint(equalTo: bar.centerXAnchor); c.priority = .defaultHigh; return c }(),
             titles.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            titles.widthAnchor.constraint(lessThanOrEqualTo: bar.widthAnchor, constant: -200),
+            titles.leadingAnchor.constraint(greaterThanOrEqualTo: backButton.trailingAnchor, constant: 4),
+            titles.trailingAnchor.constraint(lessThanOrEqualTo: right.leadingAnchor, constant: -4),
             right.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -8),
             right.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             rule.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
@@ -325,6 +332,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         pageButton.isHidden = mode == .page
         homeButton.isHidden = mode != .page
         changeButton.isHidden = mode != .read
+        shareButton.isHidden = mode == .page
         switch mode {
         case .page: subtitleLabel.text = "Original page"
         case .pick: subtitleLabel.text = "\(lifted) of \(kinds) kinds kept"
@@ -468,6 +476,23 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     /// Whether a site has a filter of the user's own or a suggested one on hand.
     private static func hasFilter(_ host: String) -> Bool {
         RecipeHandler.recipe(forHost: host) != nil || SuggestedFilters.hasAny(host: host)
+    }
+
+    /// Shares the filter as it stands (the picks on screen, plus the site's picks for its
+    /// other kinds of page) as a link; see ShareLinks.
+    private func shareFilter() {
+        guard let host = webView.url?.host else { return }
+        readerView.evaluateJavaScript("window.NewsJuice && NewsJuice.currentRecipe()") { [weak self] value, _ in
+            guard let self, let keep = value as? [String], !keep.isEmpty,
+                  let link = ShareLinks.link(host: host, keep: keep) else { return }
+            let site = RecipeHandler.normalize(host)
+            NSLog("NewsJuice sharing %@", link.absoluteString)
+            let sheet = UIActivityViewController(
+                activityItems: ["My News Lens filter for \(site): it keeps just the text worth reading.", link],
+                applicationActivities: nil)
+            sheet.popoverPresentationController?.sourceView = self.shareButton
+            self.present(sheet, animated: true)
+        }
     }
 
     private func flash(_ text: String) {
@@ -683,6 +708,12 @@ final class RecipeHandler: NSObject, WKScriptMessageHandler {
         UserDefaults.standard.set(all, forKey: key)
     }
 
+    static func save(host: String, keep: [String]) {
+        var all = UserDefaults.standard.dictionary(forKey: key) as? [String: [String]] ?? [:]
+        all[normalize(host)] = keep
+        UserDefaults.standard.set(all, forKey: key)
+    }
+
     static func recipe(forHost host: String) -> [String]? {
         let all = UserDefaults.standard.dictionary(forKey: key) as? [String: [String]]
         return all?[normalize(host)]
@@ -713,9 +744,7 @@ final class RecipeHandler: NSObject, WKScriptMessageHandler {
             NSLog("NewsJuice recipe for %@ reset", host)
             return
         }
-        var all = UserDefaults.standard.dictionary(forKey: Self.key) as? [String: [String]] ?? [:]
-        all[Self.normalize(host)] = keep
-        UserDefaults.standard.set(all, forKey: Self.key)
+        Self.save(host: host, keep: keep)
         NSLog("NewsJuice recipe for %@: %@", host, keep.joined(separator: " | "))
     }
 }
@@ -724,6 +753,87 @@ final class RecipeHandler: NSObject, WKScriptMessageHandler {
 /// apple-app-site-association that opens them in the app, and a page for those without it.
 enum ShareLinks {
     static let baseURL = URL(string: "https://arvindrajnaidu.github.io/f/")!
+    /// The same link as newslens://f/<host>#<filter>, for the "Open in News Lens" button
+    /// on the web page (a universal link tapped on its own site stays in Safari).
+    static let scheme = "newslens"
+
+    /// The filter rides after the "#": its style signatures joined by "|", base64url.
+    static func link(host: String, keep: [String]) -> URL? {
+        let data = Data(keep.joined(separator: "|").utf8)
+        let code = data.base64EncodedString().replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        return URL(string: baseURL.absoluteString + RecipeHandler.normalize(host) + "#" + code)
+    }
+
+    /// A shared filter in a link, or nil if the link isn't one (or doesn't hold up).
+    static func parse(_ url: URL) -> (host: String, keep: [String])? {
+        let path: [String]
+        switch url.scheme?.lowercased() {
+        case "https" where url.host == baseURL.host: path = url.pathComponents.filter { $0 != "/" }
+        case scheme: path = ([url.host ?? ""] + url.pathComponents).filter { $0 != "/" && !$0.isEmpty }
+        default: return nil
+        }
+        guard path.count == 2, path[0] == "f",
+              path[1].range(of: #"^[a-z0-9-]+(\.[a-z0-9-]+)+$"#, options: [.regularExpression, .caseInsensitive]) != nil,
+              let code = url.fragment, code.count <= 4000 else { return nil }
+        var b64 = code.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        b64 += String(repeating: "=", count: (4 - b64.count % 4) % 4)
+        guard let data = Data(base64Encoded: b64), let text = String(data: data, encoding: .utf8) else { return nil }
+        // Only things shaped like style signatures ("18px bold georgia links"), and not too many.
+        let keep = text.split(separator: "|").map(String.init).filter {
+            $0.count <= 80 && $0.range(of: #"^\d{1,3}px[ a-z0-9_.\-]*$"#,
+                                       options: [.regularExpression, .caseInsensitive]) != nil
+        }
+        guard !keep.isEmpty, keep.count <= 40 else { return nil }
+        return (path[1].lowercased(), keep)
+    }
+
+    /// A link that arrived before the app's UI was up (opening the app from it).
+    private static var pending: URL?
+
+    /// Handles a share link: asks whether to use the filter, then saves it and opens the
+    /// site filtered. Returns false if the URL isn't a share link.
+    @discardableResult
+    static func open(_ url: URL) -> Bool {
+        guard parse(url) != nil else {
+            NSLog("NewsJuice not a share link: %@", url.absoluteString)
+            return false
+        }
+        pending = url
+        showPending()
+        return true
+    }
+
+    static func showPending() {
+        guard let url = pending, let shared = parse(url),
+              let root = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+                .flatMap(\.windows).compactMap(\.rootViewController).first(where: { $0 is MainViewController }),
+              root.isViewLoaded, root.view.window != nil else {
+            NSLog("NewsJuice share link waiting for the UI")
+            return
+        }
+        pending = nil
+        let (host, keep) = shared
+        var top = root
+        while let next = top.presentedViewController { top = next }
+        let site = RecipeHandler.normalize(host)
+        let replaces = RecipeHandler.recipe(forHost: host) != nil
+        let kinds = keep.count == 1 ? "1 kind" : "\(keep.count) kinds"
+        let alert = UIAlertController(
+            title: "Use this filter for \(site)?",
+            message: "Someone shared a News Lens filter that keeps \(kinds) of text."
+                + (replaces ? " It replaces your own filter for this site." : ""),
+            preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Use Filter", style: .default) { _ in
+            RecipeHandler.save(host: site, keep: keep)
+            NSLog("NewsJuice shared filter for %@: %@", site, keep.joined(separator: " | "))
+            guard let page = URL(string: "https://\(host)/") else { return }
+            let show = { root.present(BrowserViewController(url: page, filter: true), animated: true) }
+            if root.presentedViewController != nil { root.dismiss(animated: true, completion: show) } else { show() }
+        })
+        top.present(alert, animated: true)
+    }
 }
 
 /// Suggested filters: one filters.json that Arvind keeps (a public gist; see docs/filters.md),
