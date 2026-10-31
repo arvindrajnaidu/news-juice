@@ -92,6 +92,10 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     private var liftedPages = Set<String>()
     /// Whether the start screen has been told which site this browser opened.
     private var siteReported = false
+    /// Set while a navigation the app asked for (a link tapped in the reader) is under way.
+    /// While the reader is up, the site can't navigate on its own (redirects, auto-refresh,
+    /// reloads); only these, and going back or forward, get through.
+    private var appNavigation = false
     /// Where the reader's filter came from: "own", "suggested" or "none".
     private var filterSource = "none"
 
@@ -423,6 +427,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     /// recipe, keep the reader up and lift the new page as soon as it loads.
     func openFromReader(_ url: URL) {
         liftOnLoad = url.host.map(Self.hasFilter) ?? false
+        appNavigation = true
         webView.load(URLRequest(url: url))
     }
 
@@ -435,6 +440,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     private func goBack() {
         guard webView.canGoBack else { return }
         if mode != .page { liftOnLoad = siteHasRecipe }
+        appNavigation = true
         webView.goBack()
     }
 
@@ -476,6 +482,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         titleLabel.text = webView.url?.host
         SuggestedFilters.refreshIfStale()
+        appNavigation = false
         // A page opened from the reader stays behind the reader until it's lifted;
         // anything else shows the page.
         if !liftOnLoad && mode != .page { toPage(animated: false) }
@@ -544,6 +551,14 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        // The reader is a snapshot of the page; while it's up, don't let the site load
+        // something else underneath it on its own.
+        if webView === self.webView, mode != .page, action.targetFrame?.isMainFrame == true,
+           !appNavigation, action.navigationType != .backForward {
+            NSLog("NewsJuice held site navigation to %@ while reading", action.request.url?.absoluteString ?? "")
+            decisionHandler(.cancel)
+            return
+        }
         let scheme = action.request.url?.scheme?.lowercased() ?? ""
         // Keep browsing in here; hand tel:, mailto:, app links etc. to the system.
         if ["http", "https", "about", "data", "blob"].contains(scheme) {
@@ -554,6 +569,10 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         }
     }
 
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        if webView === self.webView { appNavigation = false }
+    }
+
     // MARK: WKUIDelegate
 
     /// A new window. A link with target=_blank just opens here; a window opened from
@@ -561,6 +580,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     /// WebKit hands over so the page that opened it can still talk to it.
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        // Nor open windows from behind the reader.
+        if webView === self.webView, mode != .page { return nil }
         if action.navigationType == .linkActivated {
             webView.load(action.request)
             return nil
