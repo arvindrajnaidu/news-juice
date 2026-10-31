@@ -9,10 +9,10 @@ import Capacitor
 // into public/lift) injected into every page in an isolated content world: it reads
 // the page's DOM, but the site's own scripts can't see or interfere with it.
 //
-// The reader is drawn outside the site, in a second, app-owned web view layered over
-// it that loads only our own www/reader.html. Swiping the bar at the bottom up runs
-// the lift and hands the result to that view; the site underneath is paused (media
-// suspended, touches off) until the reader is swiped down again.
+// The reader is drawn outside the site, in a second, app-owned web view under it that
+// loads only our own www/reader.html. The Lift button runs the lift and hands the
+// result to that view, and the site slides away (paused, media suspended) to reveal
+// it; "‹ Page" slides the site back.
 
 /// Root view controller (created in SceneDelegate) so the local plugin gets registered.
 class MainViewController: CAPBridgeViewController {
@@ -56,28 +56,33 @@ public class NewsJuiceBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
 }
 
 final class BrowserViewController: UIViewController, WKNavigationDelegate {
+    private enum Mode { case page, pick, read }
+
     private let startURL: URL
     private var webView: WKWebView!
-    /// The app's own reader page, over the site's web view. No site code runs in it.
+    /// The app's own reader page, under the site's web view. No site code runs in it.
     private var readerView: WKWebView!
+    private var mode = Mode.page
+
+    private let pageButton = UIButton(type: .system)
     private let titleLabel = UILabel()
-    private let listButton = UIButton(type: .system)
-    private let backButton = UIButton(type: .system)
-    private var canGoBackObservation: NSKeyValueObservation?
-    /// Set when a link in the reader opened the current page: lift it once it loads.
+    private let subtitleLabel = UILabel()
+    private let homeButton = UIButton(type: .system)
+    private let changeButton = UIButton(type: .system)
+    private let liftButton = UIButton(type: .system)
+    private let progress = UIProgressView(progressViewStyle: .bar)
+    private var progressObservation: NSKeyValueObservation?
+    /// Set when the next page should open straight in the reader (a link tapped in the
+    /// reader, or going back to a page that was lifted): lift it once it loads.
     private var liftOnLoad = false
     /// Pages that were showing the reader, so going back to one lifts it again.
     private var liftedPages = Set<String>()
-    private let liftBar = UIView()
-    private let liftLabel = UILabel()
-    private let progress = UIProgressView(progressViewStyle: .bar)
-    private var progressObservation: NSKeyValueObservation?
-    private var readerUp = false
 
-    private static let paper = UIColor { $0.userInterfaceStyle == .dark
-        ? UIColor(red: 0.10, green: 0.098, blue: 0.086, alpha: 1)
-        : UIColor(red: 0.984, green: 0.973, blue: 0.949, alpha: 1) }
+    private static let bar = UIColor { $0.userInterfaceStyle == .dark
+        ? UIColor(red: 0.13, green: 0.125, blue: 0.11, alpha: 1)
+        : UIColor(red: 0.953, green: 0.937, blue: 0.902, alpha: 1) }
     private static let accent = UIColor(red: 0.91, green: 0.64, blue: 0.09, alpha: 1)
+    private static let ink = UIColor(red: 0.114, green: 0.106, blue: 0.094, alpha: 1)
 
     init(url: URL) {
         startURL = url
@@ -89,7 +94,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = Self.paper
+        view.backgroundColor = Self.bar
 
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
@@ -110,8 +115,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         if #available(iOS 16.4, *) { webView.isInspectable = true }
         #endif
 
-        // reader.js saves a site's recipe (the text groups to keep) and reports the
-        // reader's state and tapped links through this handler.
+        // reader.js saves a site's recipe (the text groups to lift) and reports its mode
+        // and tapped links through this handler.
         let readerConfig = WKWebViewConfiguration()
         let handler = RecipeHandler()
         handler.browser = self
@@ -127,11 +132,16 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         if let page = Bundle.main.url(forResource: "reader", withExtension: "html", subdirectory: "public") {
             readerView.loadFileURL(page, allowingReadAccessTo: page.deletingLastPathComponent())
         }
+        // Swiping in from the left edge of the reader goes back a page, like the site.
+        let edge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(readerEdgeSwipe(_:)))
+        edge.edges = .left
+        readerView.addGestureRecognizer(edge)
 
         let topBar = makeTopBar()
-        makeLiftBar()
+        makeLiftButton()
 
-        for v in [topBar, progress, webView!, readerView!, liftBar] as [UIView] {
+        // The site sits on top of the reader and slides away to reveal it.
+        for v in [readerView!, webView!, topBar, progress, liftButton] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
@@ -140,7 +150,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
             topBar.topAnchor.constraint(equalTo: guide.topAnchor),
             topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topBar.heightAnchor.constraint(equalToConstant: 44),
+            topBar.heightAnchor.constraint(equalToConstant: 52),
 
             progress.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             progress.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -149,128 +159,124 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
             webView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            webView.bottomAnchor.constraint(equalTo: liftBar.topAnchor),
+            webView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
             readerView.topAnchor.constraint(equalTo: webView.topAnchor),
             readerView.leadingAnchor.constraint(equalTo: webView.leadingAnchor),
             readerView.trailingAnchor.constraint(equalTo: webView.trailingAnchor),
             readerView.bottomAnchor.constraint(equalTo: webView.bottomAnchor),
 
-            liftBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            liftBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            liftBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            liftBar.topAnchor.constraint(equalTo: guide.bottomAnchor, constant: -52),
+            liftButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            liftButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            liftButton.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -12),
+            liftButton.heightAnchor.constraint(equalToConstant: 54),
         ])
-        view.bringSubviewToFront(progress)
 
         progressObservation = webView.observe(\.estimatedProgress) { [weak self] wv, _ in
             self?.progress.setProgress(Float(wv.estimatedProgress), animated: true)
             self?.progress.isHidden = wv.estimatedProgress >= 1
         }
-        canGoBackObservation = webView.observe(\.canGoBack, options: [.initial]) { [weak self] wv, _ in
-            self?.backButton.isHidden = !wv.canGoBack
-        }
+        updateBar(lifted: 0, kinds: 0)
         webView.load(URLRequest(url: startURL))
     }
 
+    /// Site name with what you're looking at underneath; "‹ Page" at left while lifted;
+    /// Home on the page, Change while reading.
     private func makeTopBar() -> UIView {
         let bar = UIView()
-        bar.backgroundColor = Self.paper
-        let close = UIButton(type: .system, primaryAction: UIAction(title: "Done") { [weak self] _ in
-            self?.dismiss(animated: true)
-        })
-        close.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
-        titleLabel.font = .systemFont(ofSize: 13)
-        titleLabel.textColor = .secondaryLabel
-        titleLabel.textAlignment = .center
+        bar.backgroundColor = Self.bar
+        let rule = UIView()
+        rule.backgroundColor = UIColor.separator
+
+        var page = UIButton.Configuration.plain()
+        page.image = UIImage(systemName: "chevron.backward",
+                             withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold))
+        page.title = "Page"
+        page.imagePadding = 2
+        page.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 6)
+        pageButton.configuration = page
+        pageButton.addAction(UIAction { [weak self] _ in self?.toPage() }, for: .primaryActionTriggered)
+
+        titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         titleLabel.text = startURL.host
-        // Folds the reader's list of text groups away (Hide) and back (Edit). Shown only
-        // while the reader is up; reader.js tells us whether its list is open.
-        listButton.addAction(UIAction { [weak self] _ in
-            self?.readerView.evaluateJavaScript("window.NewsJuice && NewsJuice.togglePanel()")
+        subtitleLabel.font = .systemFont(ofSize: 12)
+        subtitleLabel.textColor = .secondaryLabel
+        let titles = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
+        titles.axis = .vertical
+        let left = UIStackView(arrangedSubviews: [pageButton, titles])
+        left.alignment = .center
+        left.spacing = 4
+
+        homeButton.configuration = .plain()
+        homeButton.setTitle("Home", for: .normal)
+        homeButton.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true) }, for: .primaryActionTriggered)
+
+        var change = UIButton.Configuration.filled()
+        change.title = "Change"
+        change.baseBackgroundColor = .systemBackground
+        change.baseForegroundColor = .label
+        change.cornerStyle = .capsule
+        change.background.strokeColor = UIColor(red: 0.79, green: 0.76, blue: 0.71, alpha: 1)
+        change.background.strokeWidth = 1
+        change.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
+            var a = $0; a.font = .systemFont(ofSize: 15, weight: .semibold); return a
+        }
+        changeButton.configuration = change
+        changeButton.addAction(UIAction { [weak self] _ in
+            self?.readerView.evaluateJavaScript("window.NewsJuice && NewsJuice.setMode('pick')")
         }, for: .primaryActionTriggered)
-        listButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
-        listButton.isHidden = true
-        backButton.setImage(UIImage(systemName: "chevron.backward",
-                                    withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)), for: .normal)
-        backButton.accessibilityLabel = "Back"
-        backButton.isHidden = true
-        backButton.addAction(UIAction { [weak self] _ in self?.webView.goBack() }, for: .primaryActionTriggered)
-        for v in [close, backButton, titleLabel, listButton] as [UIView] {
+
+        for v in [left, homeButton, changeButton, rule] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             bar.addSubview(v)
         }
         NSLayoutConstraint.activate([
-            close.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 16),
-            close.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            backButton.leadingAnchor.constraint(equalTo: close.trailingAnchor, constant: 14),
-            backButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            listButton.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -16),
-            listButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            titleLabel.centerXAnchor.constraint(equalTo: bar.centerXAnchor),
-            titleLabel.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            titleLabel.widthAnchor.constraint(lessThanOrEqualTo: bar.widthAnchor, constant: -200),
+            left.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 16),
+            left.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            left.trailingAnchor.constraint(lessThanOrEqualTo: changeButton.leadingAnchor, constant: -8),
+            homeButton.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -8),
+            homeButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            changeButton.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -12),
+            changeButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            changeButton.heightAnchor.constraint(equalToConstant: 38),
+            rule.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
+            rule.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+            rule.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
+            rule.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
         ])
         return bar
     }
 
-    /// The bar at the bottom: a grab handle and a label. Swipe it up (or tap it)
-    /// to lift; with the reader up, swipe it down (or tap it) to see the page.
-    private func makeLiftBar() {
-        liftBar.backgroundColor = Self.paper
-        liftBar.layer.shadowColor = UIColor.black.cgColor
-        liftBar.layer.shadowOpacity = 0.12
-        liftBar.layer.shadowRadius = 6
-        liftBar.layer.shadowOffset = CGSize(width: 0, height: -2)
-        liftBar.accessibilityTraits = .button
-
-        let handle = UIView()
-        handle.backgroundColor = Self.accent
-        handle.layer.cornerRadius = 2.5
-        liftLabel.font = .systemFont(ofSize: 15, weight: .semibold)
-        liftLabel.textAlignment = .center
-        for v in [handle, liftLabel] as [UIView] {
-            v.translatesAutoresizingMaskIntoConstraints = false
-            liftBar.addSubview(v)
+    /// The full-width amber Lift button floating over the page.
+    private func makeLiftButton() {
+        var c = UIButton.Configuration.filled()
+        c.title = "Lift"
+        c.image = UIImage(systemName: "magnifyingglass",
+                          withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .bold))
+        c.imagePadding = 8
+        c.baseBackgroundColor = Self.accent
+        c.baseForegroundColor = Self.ink
+        c.background.cornerRadius = 16
+        c.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
+            var a = $0; a.font = .systemFont(ofSize: 17, weight: .semibold); return a
         }
-        NSLayoutConstraint.activate([
-            handle.topAnchor.constraint(equalTo: liftBar.topAnchor, constant: 8),
-            handle.centerXAnchor.constraint(equalTo: liftBar.centerXAnchor),
-            handle.widthAnchor.constraint(equalToConstant: 44),
-            handle.heightAnchor.constraint(equalToConstant: 5),
-            liftLabel.topAnchor.constraint(equalTo: handle.bottomAnchor, constant: 8),
-            liftLabel.centerXAnchor.constraint(equalTo: liftBar.centerXAnchor),
-        ])
-        updateLiftLabel()
-
-        liftBar.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(panLiftBar(_:))))
-        liftBar.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapLiftBar)))
+        liftButton.configuration = c
+        liftButton.layer.shadowColor = Self.ink.cgColor
+        liftButton.layer.shadowOpacity = 0.22
+        liftButton.layer.shadowRadius = 12
+        liftButton.layer.shadowOffset = CGSize(width: 0, height: 10)
+        liftButton.addAction(UIAction { [weak self] _ in self?.lift() }, for: .primaryActionTriggered)
     }
 
-    private func updateLiftLabel() {
-        liftLabel.text = readerUp ? "Swipe down for the page" : "Swipe up to lift"
-        liftBar.accessibilityLabel = readerUp ? "Back to page" : "Lift article"
-    }
-
-    @objc private func tapLiftBar() {
-        readerUp ? dropReader() : lift()
-    }
-
-    @objc private func panLiftBar(_ pan: UIPanGestureRecognizer) {
-        let dy = pan.translation(in: view).y
-        switch pan.state {
-        case .changed:
-            // Let the bar follow the finger a little so the gesture feels physical.
-            let travel = readerUp ? max(0, min(dy, 30)) : min(0, max(dy, -30))
-            liftBar.transform = CGAffineTransform(translationX: 0, y: travel)
-        case .ended, .cancelled:
-            let vy = pan.velocity(in: view).y
-            UIView.animate(withDuration: 0.2) { self.liftBar.transform = .identity }
-            guard pan.state == .ended else { return }
-            if !readerUp && (dy < -24 || vy < -400) { lift() }
-            if readerUp && (dy > 24 || vy > 400) { dropReader() }
-        default:
-            break
+    /// Shows what the top bar should for the current mode.
+    private func updateBar(lifted: Int, kinds: Int) {
+        pageButton.isHidden = mode == .page
+        homeButton.isHidden = mode != .page
+        changeButton.isHidden = mode != .read
+        switch mode {
+        case .page: subtitleLabel.text = "Original page"
+        case .pick: subtitleLabel.text = "\(lifted) of \(kinds) kinds lifted"
+        case .read: subtitleLabel.text = "Lifted · saved for this site"
         }
     }
 
@@ -294,7 +300,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         }
     }
 
-    /// Hands a lift result to the app's reader view and pauses the site underneath.
+    /// Hands a lift result to the reader view, then slides the site away to reveal it.
+    /// reader.js opens in Read for a site with a recipe and in Pick for a new one.
     private func showReader(_ liftJSON: String, attempt: Int = 0) {
         let recipe = webView.url?.host.flatMap(RecipeHandler.recipe(forHost:))
         let recipeJSON = recipe.flatMap { try? JSONSerialization.data(withJSONObject: $0) }
@@ -309,59 +316,74 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
                 }
                 return
             }
-            self.readerView.isHidden = false
-            self.webView.isUserInteractionEnabled = false
-            self.webView.pauseAllMediaPlayback()
-            self.webView.setAllMediaPlaybackSuspended(true)
-            self.readerUp = true
-            self.listButton.isHidden = false
             if let url = self.webView.url?.absoluteString { self.liftedPages.insert(url) }
-            self.updateLiftLabel()
+            self.revealReader()
         }
     }
 
-    private func dropReader() {
-        // reader.js closes on Escape.
-        readerView.evaluateJavaScript("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))")
-        readerClosed()
+    /// Slides the site (and the Lift button) down out of the way and pauses it.
+    private func revealReader() {
+        readerView.isHidden = false
+        webView.pauseAllMediaPlayback()
+        webView.setAllMediaPlaybackSuspended(true)
+        guard !webView.isHidden else { return }
+        let drop = CGAffineTransform(translationX: 0, y: view.bounds.height)
+        UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0, options: []) {
+            self.webView.transform = drop
+            self.webView.alpha = 0
+            self.liftButton.transform = CGAffineTransform(translationX: 0, y: 140)
+            self.liftButton.alpha = 0
+        } completion: { _ in
+            guard self.mode != .page else { return }
+            self.webView.isHidden = true
+        }
+    }
+
+    /// "‹ Page": slides the original site back up over the reader and wakes it.
+    private func toPage(animated: Bool = true) {
+        mode = .page
+        updateBar(lifted: 0, kinds: 0)
+        webView.setAllMediaPlaybackSuspended(false)
+        webView.isHidden = false
+        let show = {
+            self.webView.transform = .identity
+            self.webView.alpha = 1
+            self.liftButton.transform = .identity
+            self.liftButton.alpha = 1
+        }
+        let done = { (_: Bool) in if self.mode == .page { self.readerView.isHidden = true } }
+        guard animated else { show(); done(true); return }
+        UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0,
+                       options: [], animations: show, completion: done)
+    }
+
+    /// reader.js: it switched between Pick and Read (or the lifted count changed).
+    func readerMode(_ name: String, lifted: Int, kinds: Int) {
+        mode = name == "read" ? .read : .pick
+        updateBar(lifted: lifted, kinds: kinds)
     }
 
     /// reader.js: a link in the reader was tapped. Open it, and if the site has a
-    /// recipe, lift it as soon as it loads so reading carries on in the reader.
+    /// recipe, keep the reader up and lift the new page as soon as it loads.
     func openFromReader(_ url: URL) {
         liftOnLoad = url.host.flatMap(RecipeHandler.recipe(forHost:)) != nil
         webView.load(URLRequest(url: url))
+    }
+
+    @objc private func readerEdgeSwipe(_ gesture: UIScreenEdgePanGestureRecognizer) {
+        guard gesture.state == .recognized, webView.canGoBack else { return }
+        liftOnLoad = siteHasRecipe
+        webView.goBack()
     }
 
     private var siteHasRecipe: Bool {
         webView.url?.host.flatMap(RecipeHandler.recipe(forHost:)) != nil
     }
 
-    /// reader.js: the list of text groups was opened or folded.
-    func panelChanged(open: Bool) {
-        listButton.setTitle(open ? "Hide" : "Edit", for: .normal)
-        listButton.isHidden = !readerUp
-    }
-
-    /// reader.js: the reader went away (its handle was tapped, or we dropped it).
-    /// Wakes the site underneath and hides the reader view once its sheet has slid away.
-    func readerClosed() {
-        readerUp = false
-        listButton.isHidden = true
-        webView.isUserInteractionEnabled = true
-        webView.setAllMediaPlaybackSuspended(false)
-        updateLiftLabel()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            guard let self, !self.readerUp else { return }
-            self.readerView.isHidden = true
-        }
-    }
-
     private func flash(_ text: String) {
-        let old = liftLabel.text
-        liftLabel.text = text
+        liftButton.configuration?.title = text
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            if self?.liftLabel.text == text { self?.liftLabel.text = old }
+            self?.liftButton.configuration?.title = "Lift"
         }
     }
 
@@ -369,7 +391,9 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         titleLabel.text = webView.url?.host
-        readerClosed() // a new page starts without the reader
+        // A page opened from the reader stays behind the reader until it's lifted;
+        // anything else shows the page.
+        if !liftOnLoad && mode != .page { toPage(animated: false) }
         #if DEBUG
         debugRunDone = false
         #endif
@@ -379,10 +403,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
         let backToLifted = webView.url.map { liftedPages.contains($0.absoluteString) } ?? false
         if liftOnLoad || (backToLifted && siteHasRecipe) {
             // A beat for late paragraphs to render before lifting.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-                guard let self, !self.readerUp else { return }
-                self.lift()
-            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.lift() }
         }
         liftOnLoad = false
         #if DEBUG
@@ -450,7 +471,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate {
 
 /// Stores each site's recipe (the style groups to keep in the reader) in UserDefaults,
 /// keyed by host without "www.", so it applies to every page on that site.
-/// Also passes reader.js's panel and reader state on to the browser's top bar.
+/// Also passes reader.js's mode and tapped links on to the browser.
 final class RecipeHandler: NSObject, WKScriptMessageHandler {
     private static let key = "NJRecipes"
     weak var browser: BrowserViewController?
@@ -467,11 +488,9 @@ final class RecipeHandler: NSObject, WKScriptMessageHandler {
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any] else { return }
         switch body["type"] as? String {
-        case "panel":
-            browser?.panelChanged(open: body["open"] as? Bool ?? false)
-            return
-        case "readerClosed":
-            browser?.readerClosed()
+        case "mode":
+            browser?.readerMode(body["mode"] as? String ?? "pick",
+                                lifted: body["lifted"] as? Int ?? 0, kinds: body["kinds"] as? Int ?? 0)
             return
         case "navigate":
             if let url = (body["url"] as? String).flatMap(URL.init(string:)) { browser?.openFromReader(url) }

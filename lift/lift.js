@@ -9,7 +9,7 @@
 // Runs in any browser context (desktop page, bookmarklet, mobile webview).
 // Exposes window.NewsJuice.lift(options) -> result object:
 //   { ok, url, host, title, article,
-//     groups: [{ id, size, bold, italic, family, link, chars, count, sample }],  // most text first
+//     groups: [{ id, size, bold, italic, family, link, color, transform, chars, count, sample }],  // most text first
 //     blocks: [{ g, text, tag, href?, links? }] }                                // page order
 // A block that sits inside a link has its `href`; links within a block's text are
 // `links`: [start, end, href] ranges into `text`.
@@ -136,6 +136,7 @@
         links: own.links,
         tag: el.tagName.toLowerCase(),
         size: size, bold: bold, italic: italic, family: family, link: link,
+        color: st.color, transform: st.textTransform,
       });
     }
     return blocks;
@@ -148,7 +149,7 @@
       var g = byId[b.g];
       if (!g) {
         g = byId[b.g] = { id: b.g, size: b.size, bold: b.bold, italic: b.italic, family: b.family,
-          link: b.link, chars: 0, count: 0, sample: b.text.replace(/\n/g, ' ').slice(0, opts.sampleChars) };
+          link: b.link, color: b.color, transform: b.transform, chars: 0, count: 0, sample: b.text.replace(/\n/g, ' ').slice(0, opts.sampleChars) };
         groups.push(g);
       }
       g.chars += b.text.length;

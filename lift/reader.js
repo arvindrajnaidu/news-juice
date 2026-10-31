@@ -1,79 +1,112 @@
-// Clean reading view for a lift() result. Slides up over the page as an
-// overlay; tap the handle or press Escape to drop it back down.
+// "Tap to lift" reader for a lift() result.
 //
-// The lift sorts the page's text into style groups. The sheet has a panel
-// listing them (sample line, size, Keep/Cull) and shows only the kept groups,
-// in page order, updating as you toggle. The kept set is the site's "recipe":
-// it is saved per host and applied straight away the next time you lift a page
-// on that site. With no recipe the biggest prose group is kept and the panel
-// starts open.
+// Two modes on one sheet:
+//  - Pick ("Edit lifts"): one card per style group, in page order, each showing a
+//    real sample in the page's own style plus a plain name (Headline, Article
+//    text, Link list...). Tap a card to lift it, tap again to drop it.
+//  - Read: tapping "Read N lifted" turns the lifted cards into the article in
+//    place (unlifted ones fold away, the type settles into the reader style), then
+//    shows every block of the lifted groups in page order.
+// The lifted set is the site's "recipe": saved per host when you tap Read, and
+// applied straight away (straight to Read) the next time you lift on that site.
+// A site with no recipe opens in Pick with the biggest prose group lifted.
 //
-// Exposes window.NewsJuice.showReader(result, { recipe }), window.NewsJuice.togglePanel()
-// and window.NewsJuice.renderHTML(result). In the iOS app, recipes are saved and the
-// panel and reader state reported through its `newsJuice` message handler; elsewhere
-// recipes go to localStorage.
+// Exposes window.NewsJuice.showReader(result, { recipe }), NewsJuice.setMode('pick'|
+// 'read') and NewsJuice.renderHTML(result). In the iOS app this runs in the app's
+// own reader view (www/reader.html): recipes are saved, and the mode and tapped
+// links reported, through its `newsJuice` message handler. Elsewhere (bookmarklet)
+// recipes go to localStorage and Escape closes the sheet.
 (function () {
+  var SPRING = 'cubic-bezier(0.2, 0.9, 0.2, 1.1)';
+  var INK = '#1d1b18';
   var CSS = [
     ':host{all:initial}',
-    '.nj-sheet{position:fixed;inset:0;z-index:2147483647;overflow-y:auto;overflow-x:hidden;background:#fbf8f2;color:#1d1b18;',
-    '  transform:translateY(100%);transition:transform .35s cubic-bezier(.2,.8,.2,1);',
-    '  font:19px/1.6 Georgia,"Iowan Old Style",serif;-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%}',
-    '.nj-sheet.up{transform:none}',
-    '.nj-top{position:sticky;top:0;z-index:1;background:inherit;border-bottom:1px solid transparent}',
-    '.nj-handle{display:flex;justify-content:center;padding:10px;cursor:pointer}',
-    '.nj-handle span{width:44px;height:5px;border-radius:3px;background:#c9c2b6}',
-    '.nj-toggle{display:block;width:100%;box-sizing:border-box;margin:0;padding:0 20px 10px;border:0;background:none;color:#7a7368;',
-    '  font:600 13px system-ui,sans-serif;text-align:left;cursor:pointer}',
-    '.nj-panel{display:none;max-height:45vh;overflow-y:auto;padding:0 12px 10px;font:14px/1.35 system-ui,sans-serif}',
-    '.nj-panel.open{display:block}',
-    '.nj-row{display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;margin:0;padding:8px;border:0;',
-    '  border-radius:8px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}',
-    '.nj-row+.nj-row{border-top:1px solid #e6dfd3}',
-    '.nj-row .nj-txt{flex:1;min-width:0}',
-    '.nj-sample{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-    '.nj-meta{display:block;font-size:12px;color:#7a7368}',
-    '.nj-pill{flex:none;width:52px;padding:4px 0;border-radius:999px;text-align:center;font-size:12px;font-weight:600;',
-    '  background:#e6dfd3;color:#7a7368}',
-    '.nj-row.kept .nj-pill{background:#e8a317;color:#000}',
-    '.nj-row:not(.kept) .nj-sample{color:#9a9387}',
-    '.nj-body{max-width:38rem;margin:0 auto;padding:0 20px 80px;overflow-wrap:break-word}',
-    'h1{font-size:1.6em;line-height:1.25;margin:.4em 0 .8em}',
-    'h2{font-size:1.15em;line-height:1.3;margin:1.6em 0 .4em}',
-    'p,li{margin:0 0 1em}',
-    '.nj-small{font:14px/1.45 system-ui,sans-serif;color:#7a7368}',
-    '.nj-empty{font:15px system-ui,sans-serif;color:#7a7368}',
-    '.nj-src{font:13px system-ui,sans-serif;color:#7a7368;word-break:break-all}',
-    '.nj-body a{color:inherit;text-decoration:underline;text-decoration-color:#c9c2b6;text-underline-offset:.18em}',
-    '.nj-body a:active{background:#efe7d6}',
-    '@media (prefers-color-scheme:dark){.nj-sheet{background:#1a1916;color:#e8e3da}.nj-handle span{background:#4a463f}',
-    '  .nj-row+.nj-row{border-top-color:#3a372f}.nj-pill{background:#3a372f;color:#9a9387}.nj-row:not(.kept) .nj-sample{color:#6f695f}}',
+    '.nj-sheet{position:fixed;inset:0;z-index:2147483647;overflow-y:auto;overflow-x:hidden;color:' + INK + ';',
+    '  font:15px/1.4 -apple-system,"SF Pro Text",system-ui,sans-serif;-webkit-font-smoothing:antialiased;',
+    '  -webkit-text-size-adjust:100%;transition:background-color .5s ease;background:#ece8e0}',
+    '.nj-sheet.read{background:#fbf8f2}',
+    '.nj-intro{margin:0;padding:14px 16px 8px;font-size:13px;color:#4a453d;overflow:hidden;max-height:60px;',
+    '  transition:max-height .4s ease,opacity .3s ease,padding .4s ease}',
+    '.read .nj-intro{max-height:0;opacity:0;padding:0 16px}',
+    '.nj-list{display:flex;flex-direction:column;padding:6px 14px 0;transition:padding .45s ease}',
+    '.read .nj-list{padding:22px 24px 0}',
+    '.nj-card{display:flex;flex-direction:column;align-items:flex-start;gap:6px;width:100%;box-sizing:border-box;',
+    '  overflow:hidden;border:0;text-align:left;font:inherit;color:' + INK + ';cursor:pointer;-webkit-tap-highlight-color:transparent;',
+    '  max-height:400px;padding:12px 14px;margin:0 0 10px;border-radius:10px;',
+    '  background:rgba(255,255,255,.35);opacity:.62;transform:none;box-shadow:none;',
+    '  transition:transform .45s ' + SPRING + ' var(--d,0ms),box-shadow .45s ease var(--d,0ms),background-color .45s ease,',
+    '    opacity .35s ease,max-height .5s ease,padding .45s ease var(--d,0ms),margin .45s ease,border-radius .45s ease}',
+    '.nj-card.on{background:#fff;opacity:1;transform:translateY(-4px) scale(1.02);',
+    '  box-shadow:0 14px 28px rgba(29,27,24,.20),0 2px 6px rgba(29,27,24,.10)}',
+    '.read .nj-card{pointer-events:none;background:rgba(255,255,255,0);box-shadow:none;border-radius:0;margin:0}',
+    '.read .nj-card.on{transform:none;opacity:1;padding:0 0 14px}',
+    '.read .nj-card:not(.on){transform:translateY(-12px);opacity:0;max-height:0;padding:0}',
+    '.nj-sample{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;',
+    '  font-size:var(--ps);font-weight:var(--pw);font-style:var(--pi);color:var(--pc);text-decoration:var(--pd);',
+    '  text-transform:var(--pt);font-family:var(--pf);line-height:1.3;',
+    '  transition:font-size .45s ease var(--d,0ms),line-height .45s ease,color .45s ease}',
+    '.read .nj-sample{-webkit-line-clamp:6;color:' + INK + ';text-decoration:none;text-transform:none}',
+    '.read .role-head .nj-sample{font:700 28px/1.2 Georgia,"Iowan Old Style",serif}',
+    '.read .role-sub .nj-sample{font:700 21px/1.3 Georgia,"Iowan Old Style",serif}',
+    '.read .role-body .nj-sample{font:400 19px/1.6 Georgia,"Iowan Old Style",serif}',
+    '.read .role-small .nj-sample{font:400 14px/1.45 -apple-system,system-ui,sans-serif;color:#7a7368}',
+    '.nj-badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;overflow:hidden;max-height:24px;',
+    '  background:#d9d2c5;color:#3d3830;transition:opacity .25s ease,max-height .3s ease}',
+    '.on .nj-badge{background:#e8a317;color:' + INK + '}',
+    '.read .nj-badge{opacity:0;max-height:0;padding:0}',
+    '.nj-pad{height:120px}',
+    '.nj-readbtn{position:fixed;left:16px;right:16px;bottom:calc(env(safe-area-inset-bottom) + 12px);height:54px;border:0;',
+    '  border-radius:16px;background:#e8a317;color:' + INK + ';font:600 17px -apple-system,system-ui,sans-serif;display:flex;',
+    '  align-items:center;justify-content:center;gap:8px;box-shadow:0 10px 24px rgba(29,27,24,.22);z-index:3;',
+    '  transition:transform .4s cubic-bezier(.2,.9,.2,1),opacity .3s ease}',
+    '.nj-readbtn:disabled{opacity:.5}',
+    '.read .nj-readbtn{transform:translateY(140px);opacity:0;pointer-events:none}',
+    '@keyframes nj-in{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}',
+    '.nj-enter .nj-card{animation:nj-in .45s ' + SPRING + ' backwards;animation-delay:var(--e,0ms)}',
+    // The article, in page order.
+    '.nj-article{max-width:38rem;margin:0 auto;padding:22px 24px 80px;font:19px/1.6 Georgia,"Iowan Old Style",serif;',
+    '  overflow-wrap:break-word;transition:opacity .25s ease}',
+    '.nj-article.hidden{display:none}',
+    '.nj-article.fade{opacity:0}',
+    '.nj-article h1{font-size:28px;line-height:1.2;margin:0 0 .7em}',
+    '.nj-article h2{font-size:21px;line-height:1.3;margin:1.3em 0 .4em}',
+    '.nj-article p,.nj-article li{margin:0 0 1em}',
+    '.nj-article .small{font:14px/1.45 -apple-system,system-ui,sans-serif;color:#7a7368}',
+    '.nj-article a{color:inherit;text-decoration:underline;text-decoration-color:#c9c2b6;text-underline-offset:.18em}',
+    '.nj-article .src{font:13px -apple-system,system-ui,sans-serif;color:#7a7368;word-break:break-all;margin-top:2em}',
+    '@media (prefers-color-scheme:dark){.nj-sheet{background:#22201c;color:#e8e3da}.nj-sheet.read{background:#1a1916}',
+    '  .nj-card{color:#e8e3da;background:rgba(255,255,255,.06)}.nj-card.on{background:#2e2b26}',
+    '  .read .nj-sample{color:#e8e3da}.nj-intro{color:#b3ab9f}.nj-badge{background:#3a372f;color:#cfc8bb}}',
   ].join('\n');
 
   var STORE_PREFIX = 'newsjuice:recipe:';
   var current = null; // the reader on screen, if any
 
+  function inApp() {
+    return !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.newsJuice);
+  }
+
   // Tells the iOS app (when running in it) about the reader, so its top bar can follow.
   function notifyApp(message) {
-    var handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.newsJuice;
-    if (handler) handler.postMessage(message);
+    if (inApp()) window.webkit.messageHandlers.newsJuice.postMessage(message);
   }
 
   function esc(s) {
     return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
   }
 
+  function proseGroup(r) {
+    return r.groups.filter(function (x) { return !x.link; })[0];
+  }
+
   // With nothing saved, keep the group with the most prose (not a link list). On a
   // section front whose headline list clearly outweighs any prose, keep the headlines.
   function defaultKeep(r) {
-    var prose = r.groups.filter(function (x) { return !x.link; })[0];
+    var prose = proseGroup(r);
     var headlines = r.groups.filter(function (x) { return x.link && x.chars / x.count >= 30; })[0];
     if (!r.article && headlines && (!prose || headlines.chars > 2 * prose.chars)) return [headlines.id];
     var g = prose || r.groups[0];
     return g ? [g.id] : [];
-  }
-
-  function proseGroup(r) {
-    return r.groups.filter(function (x) { return !x.link; })[0];
   }
 
   function storedRecipe(r, given) {
@@ -97,11 +130,69 @@
   }
 
   function saveRecipe(host, keep) {
-    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.newsJuice) {
+    if (inApp()) {
       notifyApp({ type: 'saveRecipe', host: host, keep: keep });
       return;
     }
     try { localStorage.setItem(STORE_PREFIX + host, JSON.stringify(keep)); } catch (e) { /* storage blocked */ }
+  }
+
+  function byId(r) {
+    var m = {};
+    r.groups.forEach(function (g) { m[g.id] = g; });
+    return m;
+  }
+
+  // Groups in the order their first block appears on the page.
+  function pageOrder(r) {
+    var seen = {};
+    var out = [];
+    var groups = byId(r);
+    r.blocks.forEach(function (b) {
+      if (!seen[b.g]) { seen[b.g] = true; out.push(groups[b.g]); }
+    });
+    return out;
+  }
+
+  // A plain name for a group, guessed from its size, weight, links and length.
+  function kindOf(g, r) {
+    var body = proseGroup(r);
+    var base = body ? body.size : 16;
+    var avg = g.chars / g.count;
+    var biggest = 0;
+    r.groups.forEach(function (x) { if (!x.link && x.size > biggest) biggest = x.size; });
+    if (g.link) {
+      if (/video/i.test(g.sample)) return 'Video titles';
+      return avg < 25 ? 'Menu links' : 'Link list';
+    }
+    if (body && g.id === body.id) return 'Article text';
+    if (g.size === biggest && g.size > base + 2 && g.count <= 2) return 'Headline';
+    if (g.size > base + 1) return avg < 120 ? 'Subheads' : 'Summary';
+    if (/^(by |edited by|updated|published|written by)/i.test(g.sample) || /\b(IST|EDT|EST|GMT|BST|ago)\b/.test(g.sample)) return 'Byline';
+    if (avg <= 20 || g.transform === 'uppercase') return 'Labels';
+    if (g.size >= base - 1 && avg >= 80 && g.count <= 3) return 'Summary';
+    if (g.size >= base - 1 && (g.bold || (body && g.family !== body.family)) && avg < 150) return 'Subheads';
+    if (g.size < base) return avg >= 40 ? 'Captions' : 'Labels';
+    return 'Other text';
+  }
+
+  // How a group reads once lifted, relative to the biggest kept prose group.
+  function roleOf(g, base, headSize) {
+    if (g.size >= headSize && g.size > base + 4) return 'head';
+    if (g.size > base + 1) return 'sub';
+    if (g.size < base - 1) return 'small';
+    return 'body';
+  }
+
+  function readBase(r, keep) {
+    var groups = byId(r);
+    var kept = keep.map(function (id) { return groups[id]; }).filter(Boolean)
+      .sort(function (a, b) { return b.chars - a.chars; });
+    var prose = kept.filter(function (g) { return !g.link; })[0] || kept[0];
+    var base = prose ? prose.size : 16;
+    var headSize = 0;
+    kept.forEach(function (g) { if (g.size > headSize) headSize = g.size; });
+    return { base: base, headSize: headSize };
   }
 
   // A block's text as HTML, with its links (the whole block, or ranges in it) as <a>.
@@ -119,47 +210,53 @@
     return html + br(b.text.slice(at));
   }
 
-  function bodyHTML(r, keep) {
+  // The lifted groups' blocks in page order, as the article.
+  function articleHTML(r, keep) {
     var kept = {};
     keep.forEach(function (id) { kept[id] = true; });
-    var groups = {};
-    r.groups.forEach(function (g) { groups[g.id] = g; });
-    // The kept group with the most text sets the body size; bigger kept text reads as
-    // headings, smaller (captions, datelines) as small print.
-    var base = null;
-    r.groups.forEach(function (g) { if (kept[g.id] && base === null) base = g.size; });
-
-    var html = '<h1>' + esc(r.title || '') + '</h1>';
+    var groups = byId(r);
+    var sizes = readBase(r, keep);
+    var html = '';
     var inList = false;
-    var shown = 0;
-    var titleSkipped = false;
+    var headDone = false;
     r.blocks.forEach(function (b) {
       if (!kept[b.g]) return;
-      if (!titleSkipped && b.text === r.title) { titleSkipped = true; return; }
-      var g = groups[b.g];
-      var isLi = b.tag === 'li';
+      var role = roleOf(groups[b.g], sizes.base, sizes.headSize);
+      var isLi = b.tag === 'li' && role !== 'head';
       if (isLi && !inList) { html += '<ul>'; inList = true; }
       if (!isLi && inList) { html += '</ul>'; inList = false; }
       var t = textHTML(b);
-      html += g.size > base + 1 && b.text.length <= 200 ? '<h2>' + t + '</h2>'
-            : isLi ? '<li>' + t + '</li>'
-            : g.size < base - 1 ? '<p class="nj-small">' + t + '</p>'
-            : '<p>' + t + '</p>';
-      shown++;
+      if (role === 'head' && !headDone && b.text.length <= 200) { html += '<h1>' + t + '</h1>'; headDone = true; }
+      else if ((role === 'head' || role === 'sub') && b.text.length <= 200) html += '<h2>' + t + '</h2>';
+      else if (isLi) html += '<li>' + t + '</li>';
+      else if (role === 'small') html += '<p class="small">' + t + '</p>';
+      else html += '<p>' + t + '</p>';
     });
     if (inList) html += '</ul>';
-    if (!shown) html += '<p class="nj-empty">Nothing kept. Open “Text on this page” and keep a group.</p>';
-    return html + '<p class="nj-src">' + esc(r.url || '') + '</p>';
+    return html + '<p class="src">' + esc(r.url || '') + '</p>';
   }
 
-  function panelHTML(r, keep) {
-    return r.groups.map(function (g) {
-      var meta = g.size + 'px' + (g.bold ? ' bold' : '') + (g.italic ? ' italic' : '') + (g.link ? ' · links' : '') +
-        ' · ' + g.chars.toLocaleString() + ' chars · ' + g.count + (g.count === 1 ? ' block' : ' blocks');
-      var kept = keep.indexOf(g.id) >= 0;
-      return '<button class="nj-row' + (kept ? ' kept' : '') + '" data-g="' + esc(g.id) + '" role="switch" aria-checked="' + kept + '">' +
-        '<span class="nj-txt"><span class="nj-sample">' + esc(g.sample) + '</span><span class="nj-meta">' + esc(meta) +
-        '</span></span><span class="nj-pill">' + (kept ? 'Keep' : 'Cull') + '</span></button>';
+  // The page's own text colour for a sample, unless it's too pale to read on a card
+  // (white text from a dark site header).
+  function sampleColor(c) {
+    var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/.exec(c || '');
+    if (!m) return INK;
+    var lum = (0.2126 * m[1] + 0.7152 * m[2] + 0.0722 * m[3]) / 255;
+    return lum > 0.75 || (m[4] !== undefined && +m[4] < 0.5) ? INK : c;
+  }
+
+  function cardHTML(r, keep) {
+    var sizes = readBase(r, keep);
+    return pageOrder(r).map(function (g, i) {
+      var on = keep.indexOf(g.id) >= 0;
+      var kind = kindOf(g, r);
+      var vars = '--ps:' + Math.min(g.size, 30) + 'px;--pw:' + (g.bold ? 700 : 400) + ';--pi:' + (g.italic ? 'italic' : 'normal') +
+        ';--pc:' + sampleColor(g.color) + ';--pd:' + (g.link ? 'underline' : 'none') + ';--pt:' + (g.transform || 'none') +
+        ';--pf:"' + (g.family || '').replace(/"/g, '') + '",-apple-system,system-ui,sans-serif;--e:' + Math.min(i, 12) * 35 + 'ms';
+      return '<button class="nj-card role-' + roleOf(g, sizes.base, sizes.headSize) + (on ? ' on' : '') + '" data-g="' + esc(g.id) +
+        '" data-kind="' + esc(kind) + '" aria-pressed="' + on + '" style="' + esc(vars) + '">' +
+        '<span class="nj-sample">' + esc(g.sample) + '</span>' +
+        '<span class="nj-badge">' + (on ? 'Lifted · ' : '') + esc(kind) + ' · ' + g.count + '</span></button>';
     }).join('');
   }
 
@@ -168,7 +265,7 @@
     var keep = loadRecipe(r) || defaultKeep(r);
     return '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
       '<title>' + esc(r.title || 'Lifted') + '</title><style>' + CSS.replace(/\.nj-sheet\{position:fixed;inset:0;/, '.nj-sheet{') +
-      '</style><div class="nj-sheet up"><div class="nj-body">' + bodyHTML(r, keep) + '</div></div>';
+      '</style><div class="nj-sheet read"><div class="nj-article">' + articleHTML(r, keep) + '</div></div>';
   }
 
   function showReader(r, opts) {
@@ -180,90 +277,144 @@
     // their text differently), so saving keeps the groups that aren't on this page.
     var present = onPage(r);
     var elsewhere = (storedRecipe(r, opts.recipe) || []).filter(function (id) { return !present[id]; });
-    // A site that's set up but meets a new kind of page: remember the default pick for
-    // it too (the list still opens this time so it can be adjusted).
     var keep = saved || defaultKeep(r);
-    if (!saved && elsewhere.length) saveRecipe(r.host, elsewhere.concat(keep));
     // On an article, a recipe that only matches link lists here (the nav on an article
     // can look just like the headlines on a section front) still needs the body text.
-    var linkOnly = saved && saved.every(function (id) { return r.groups.some(function (g) { return g.id === id && g.link; }); });
+    var groups = byId(r);
+    var linkOnly = saved && saved.every(function (id) { return groups[id] && groups[id].link; });
     var body = proseGroup(r);
-    if (r.article && linkOnly && body) {
-      keep = keep.concat(body.id);
-      saveRecipe(r.host, elsewhere.concat(keep));
-    }
+    if (r.article && linkOnly && body) keep = keep.concat(body.id);
+    // A site that's been lifted before reads straight away; a new site (or a new kind
+    // of page on it) starts by picking.
+    var mode = saved ? 'read' : 'pick';
 
     var host = document.createElement('div');
     host.id = 'news-juice-reader';
     var root = host.attachShadow({ mode: 'open' });
-    root.innerHTML = '<style>' + CSS + '</style><div class="nj-sheet"><div class="nj-top">' +
-      '<div class="nj-handle"><span></span></div>' +
-      '<button class="nj-toggle"></button>' +
-      '<div class="nj-panel' + (saved ? '' : ' open') + '"></div></div><div class="nj-body"></div></div>';
+    root.innerHTML = '<style>' + CSS + '</style><div class="nj-sheet ' + mode + '">' +
+      '<p class="nj-intro">One sample of every kind of text on this page. Tap what you want to read; tap again to drop it.</p>' +
+      '<div class="nj-list"></div><div class="nj-article hidden"></div><div class="nj-pad"></div>' +
+      '<button class="nj-readbtn"></button></div>';
     document.documentElement.appendChild(host);
 
     var sheet = root.querySelector('.nj-sheet');
-    var panel = root.querySelector('.nj-panel');
-    var toggle = root.querySelector('.nj-toggle');
-    var body = root.querySelector('.nj-body');
-    var render = function () {
-      var open = panel.classList.contains('open');
-      toggle.textContent = (open ? '▾ ' : '▸ ') + 'Text on this page · keeping ' + keep.length + ' of ' + r.groups.length;
-      notifyApp({ type: 'panel', open: open });
-      panel.innerHTML = panelHTML(r, keep);
-      body.innerHTML = bodyHTML(r, keep);
-    };
-    render();
+    var list = root.querySelector('.nj-list');
+    var article = root.querySelector('.nj-article');
+    var readBtn = root.querySelector('.nj-readbtn');
+    var busy = false;
 
-    var togglePanel = function () {
-      panel.classList.toggle('open');
-      render();
+    var report = function () {
+      notifyApp({ type: 'mode', mode: mode, lifted: keep.length, kinds: r.groups.length });
     };
+    var updateButton = function () {
+      readBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" ' +
+        'stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="M15.5 15.5L21 21"></path></svg>' +
+        'Read ' + keep.length + ' lifted';
+      readBtn.disabled = !keep.length;
+    };
+    var showArticle = function () {
+      article.innerHTML = articleHTML(r, keep);
+      article.classList.remove('hidden');
+      list.style.display = 'none';
+    };
+
+    // Pick -> Read: lifted cards settle into the page (staggered), the rest fold away,
+    // then the full article in page order fades in where they landed.
+    var toRead = function () {
+      if (busy || !keep.length) return;
+      busy = true;
+      sheet.scrollTop = 0;
+      var sizes = readBase(r, keep);
+      var n = 0;
+      list.querySelectorAll('.nj-card').forEach(function (c) {
+        var g = groups[c.getAttribute('data-g')];
+        c.className = c.className.replace(/role-\w+/, 'role-' + roleOf(g, sizes.base, sizes.headSize));
+        c.style.setProperty('--d', c.classList.contains('on') ? (n++ * 70) + 'ms' : '0ms');
+      });
+      sheet.classList.remove('pick', 'nj-enter');
+      sheet.classList.add('read');
+      mode = 'read';
+      saveRecipe(r.host, elsewhere.concat(keep));
+      report();
+      setTimeout(function () {
+        article.classList.add('fade');
+        showArticle();
+        requestAnimationFrame(function () { article.classList.remove('fade'); busy = false; });
+      }, 450 + Math.max(0, n - 1) * 70 + 60);
+    };
+
+    // Read -> Pick: the article gives way to the cards in their read state, which
+    // then lift back into cards.
+    var toPick = function () {
+      if (busy) return;
+      busy = true;
+      list.innerHTML = cardHTML(r, keep);
+      list.style.display = '';
+      article.classList.add('hidden');
+      sheet.scrollTop = 0;
+      void sheet.offsetHeight;
+      sheet.classList.remove('read');
+      sheet.classList.add('pick');
+      mode = 'pick';
+      updateButton();
+      report();
+      setTimeout(function () { busy = false; }, 500);
+    };
+
+    list.innerHTML = cardHTML(r, keep);
+    updateButton();
+    if (mode === 'read') {
+      article.classList.add('fade');
+      showArticle();
+      requestAnimationFrame(function () { article.classList.remove('fade'); });
+    } else {
+      sheet.classList.add('nj-enter');
+    }
+    report();
+
     // Only real taps count: page scripts sometimes fire synthetic clicks.
-    toggle.addEventListener('click', function (e) { if (e.isTrusted) togglePanel(); });
+    list.addEventListener('click', function (e) {
+      if (!e.isTrusted || mode !== 'pick') return;
+      var card = e.target.closest('.nj-card');
+      if (!card) return;
+      var id = card.getAttribute('data-g');
+      var i = keep.indexOf(id);
+      if (i >= 0) keep.splice(i, 1); else keep.push(id);
+      var on = i < 0;
+      card.classList.toggle('on', on);
+      card.setAttribute('aria-pressed', on);
+      card.querySelector('.nj-badge').textContent = (on ? 'Lifted · ' : '') + card.getAttribute('data-kind') + ' · ' + groups[id].count;
+      updateButton();
+      report();
+    });
+    readBtn.addEventListener('click', function (e) { if (e.isTrusted) toRead(); });
+
     // Links go through the app, which opens the page and lifts it again when the
     // site has a recipe; in a plain browser they just navigate.
-    body.addEventListener('click', function (e) {
+    article.addEventListener('click', function (e) {
       var a = e.target.closest('a');
       if (!a) return;
       e.preventDefault();
       if (!e.isTrusted) return;
-      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.newsJuice) {
-        notifyApp({ type: 'navigate', url: a.href });
-      } else {
-        location.href = a.href;
-      }
-    });
-    // The iOS app's Hide/Edit button in its top bar calls NewsJuice.togglePanel().
-    current = { togglePanel: togglePanel };
-    panel.addEventListener('click', function (e) {
-      if (!e.isTrusted) return;
-      var row = e.target.closest('.nj-row');
-      if (!row) return;
-      var id = row.getAttribute('data-g');
-      var i = keep.indexOf(id);
-      if (i >= 0) keep.splice(i, 1); else keep.push(id);
-      saveRecipe(r.host, elsewhere.concat(keep));
-      var scroll = panel.scrollTop;
-      render();
-      panel.scrollTop = scroll;
+      if (inApp()) notifyApp({ type: 'navigate', url: a.href });
+      else location.href = a.href;
     });
 
     var close = function () {
       current = null;
-      notifyApp({ type: 'readerClosed' });
-      sheet.classList.remove('up');
       document.removeEventListener('keydown', onKey);
-      setTimeout(function () { host.remove(); }, 400);
+      host.remove();
     };
     var onKey = function (e) { if (e.key === 'Escape') close(); };
-    root.querySelector('.nj-handle').addEventListener('click', close);
-    document.addEventListener('keydown', onKey);
-    requestAnimationFrame(function () { requestAnimationFrame(function () { sheet.classList.add('up'); }); });
+    if (!inApp()) document.addEventListener('keydown', onKey);
+    current = { toRead: toRead, toPick: toPick, close: close };
   }
 
   window.NewsJuice = window.NewsJuice || {};
   window.NewsJuice.showReader = showReader;
   window.NewsJuice.renderHTML = renderHTML;
-  window.NewsJuice.togglePanel = function () { if (current) current.togglePanel(); };
+  window.NewsJuice.setMode = function (m) {
+    if (!current) return;
+    if (m === 'read') current.toRead(); else current.toPick();
+  };
 })();
