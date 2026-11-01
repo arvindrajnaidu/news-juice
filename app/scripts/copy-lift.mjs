@@ -12,7 +12,7 @@ const src = path.join(app, '..', 'lift');
 const dest = path.join(app, 'www', 'lift');
 
 await fs.mkdir(dest, { recursive: true });
-for (const f of ['lift.js', 'reader.js']) {
+for (const f of ['lift.js', 'pick.js', 'reader.js']) {
   await fs.copyFile(path.join(src, f), path.join(dest, f));
 }
 await fs.mkdir(path.join(app, 'www', 'debug'), { recursive: true });

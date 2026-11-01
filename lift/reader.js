@@ -326,7 +326,7 @@
     var keep = (saved || suggested || defaultKeep(r)).slice();
     // A site with a recipe reads straight away; a new site (or a new kind of page on
     // it) starts by picking.
-    var mode = saved || suggested ? 'read' : 'pick';
+    var mode = opts.mode || (saved || suggested ? 'read' : 'pick');
 
     var host = document.createElement('div');
     host.id = 'news-juice-reader';
@@ -501,11 +501,28 @@
         sheet.scrollTo({ top: sheet.scrollTop + box.top - innerHeight / 3, behavior: 'smooth' });
       }
     };
-    current = { toRead: toRead, toPick: toPick, close: close, recipe: recipe, speech: speech, speaking: speaking };
+    current = { toRead: toRead, toPick: toPick, close: close, recipe: recipe, speech: speech, speaking: speaking,
+      keep: function () { return keep.slice(); } };
   }
 
   window.NewsJuice = window.NewsJuice || {};
   window.NewsJuice.showReader = showReader;
+  // For the on-page picker: a name for each style group, and a first guess at a filter
+  // for a site with none (the suggested one if it matches, else the main text and the
+  // page's headline).
+  window.NewsJuice.pickPrep = function (r, suggested) {
+    var kinds = {};
+    r.groups.forEach(function (g) { kinds[g.id] = kindOf(g, r); });
+    var guess = matchRecipe(r, suggested);
+    if (!guess) {
+      guess = defaultKeep(r);
+      var head = r.groups.filter(function (g) { return kinds[g.id] === 'Headline'; })[0];
+      if (head && guess.indexOf(head.id) < 0) guess = guess.concat(head.id);
+    }
+    return { kinds: kinds, keep: guess };
+  };
+  // The picks for this page (for editing them on the page).
+  window.NewsJuice.currentKeep = function () { return current ? current.keep() : null; };
   window.NewsJuice.renderHTML = renderHTML;
   window.NewsJuice.currentRecipe = function () { return current ? current.recipe() : null; };
   window.NewsJuice.speechParts = function () { return current ? current.speech() : null; };

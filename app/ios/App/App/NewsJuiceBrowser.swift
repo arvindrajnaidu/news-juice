@@ -75,7 +75,9 @@ public class NewsJuiceBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
 }
 
 final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
-    private enum Mode { case page, pick, read }
+    /// page: the site; select: picking the filter on the site itself (pick.js);
+    /// pick: the card list in the reader; read: the filtered article.
+    private enum Mode { case page, select, pick, read }
 
     private let startURL: URL
     private var webView: WKWebView!
@@ -113,6 +115,14 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     /// How many articles deep the reader is from links followed inside it; back walks
     /// these, then leaves the filtered view for the original page.
     private var readerTrail = 0
+    /// The last lift result (JSON), what the on-page picker works from.
+    private var lastLift: String?
+    private var lastSuggested: [String]?
+    /// On-page picking: the groups in the filter so far, and how many groups the page has.
+    private var pickKeep: [String] = []
+    private var pickGroups = 0
+    private let pickBar = PickBar()
+    private var bottomBarHeight: NSLayoutConstraint!
     /// Where the reader's filter came from: "own", "suggested" or "none".
     private var filterSource = "none"
 
@@ -151,6 +161,15 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         } else {
             assertionFailure("public/lift/lift.js missing from the bundle: run `npm run sync` in app/")
         }
+        if let file = Bundle.main.url(forResource: "pick", withExtension: "js", subdirectory: "public/lift"),
+           let source = try? String(contentsOf: file, encoding: .utf8) {
+            config.userContentController.addUserScript(
+                WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
+        }
+        // pick.js (in the same isolated world) reports each tap on the page here.
+        let pickHandler = RecipeHandler()
+        pickHandler.browser = self
+        config.userContentController.add(pickHandler, contentWorld: .defaultClient, name: "njPick")
         // Sites tailor their markup to the user agent; look like Mobile Safari.
         config.applicationNameForUserAgent = "Version/26.0 Mobile/15E148 Safari/604.1"
 
@@ -193,10 +212,13 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         bottomBar.backgroundColor = Self.bar
         let hairline = UIView()
         hairline.backgroundColor = .separator
-        for v in [hairline, liftButton] as [UIView] {
+        for v in [hairline, liftButton, pickBar] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             bottomBar.addSubview(v)
         }
+        pickBar.isHidden = true
+        pickBar.onStart = { [weak self] in self?.finishPicking() }
+        pickBar.onList = { [weak self] in self?.pickFromList() }
 
         // The site sits on top of the reader and slides away to reveal it; the site ends
         // above the bottom bar, the reader runs to the bottom of the screen.
@@ -228,7 +250,6 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             bottomBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bottomBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            bottomBar.topAnchor.constraint(equalTo: guide.bottomAnchor, constant: -62),
 
             hairline.topAnchor.constraint(equalTo: bottomBar.topAnchor),
             hairline.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor),
@@ -240,12 +261,18 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             liftButton.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: 8),
             liftButton.heightAnchor.constraint(equalToConstant: 46),
 
+            pickBar.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: 16),
+            pickBar.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -16),
+            pickBar.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: 8),
+
             player.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             player.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             player.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             player.topAnchor.constraint(equalTo: guide.bottomAnchor, constant: -80),
         ])
         player.isHidden = true
+        bottomBarHeight = bottomBar.topAnchor.constraint(equalTo: guide.bottomAnchor, constant: -62)
+        bottomBarHeight.isActive = true
         player.onPlayPause = { [weak self] in self?.narrator.togglePause() }
         player.onPrevious = { [weak self] in self?.narrator.skip(by: -1) }
         player.onNext = { [weak self] in self?.narrator.skip(by: 1) }
@@ -313,9 +340,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             button.widthAnchor.constraint(equalToConstant: 44).isActive = true
             button.heightAnchor.constraint(equalToConstant: 44).isActive = true
         }
-        iconButton(changeButton, "magnifyingglass", "Edit filter") { [weak self] in
-            self?.readerView.evaluateJavaScript("window.NewsJuice && NewsJuice.setMode('pick')")
-        }
+        iconButton(changeButton, "magnifyingglass", "Edit filter") { [weak self] in self?.editOnPage() }
         iconButton(shareButton, "square.and.arrow.up", "Share filter") { [weak self] in self?.shareFilter() }
         iconButton(listenButton, "headphones", "Listen") { [weak self] in self?.listen() }
         let right = UIStackView(arrangedSubviews: [listenButton, shareButton, changeButton])
@@ -370,11 +395,11 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         backButton.accessibilityLabel = mode != .page ? (readerTrail > 0 ? "Previous article" : "Original page")
             : webView.canGoBack ? "Back" : "Your sites"
         changeButton.isHidden = mode != .read
-        shareButton.isHidden = mode == .page
+        shareButton.isHidden = mode == .page || mode == .select
         listenButton.isHidden = mode != .read || narrator.isOn
         switch mode {
         case .page: subtitleLabel.text = "Original page"
-        case .pick: subtitleLabel.text = "\(lifted) of \(kinds) styles in filter"
+        case .pick, .select: subtitleLabel.text = "\(lifted) of \(kinds) styles in filter"
         case .read: subtitleLabel.text = filterSource == "suggested" ? "Suggested filter" : "Filtered · saved for this site"
         }
     }
@@ -397,7 +422,16 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
                   groups.count, groups.prefix(4).compactMap { $0["id"] as? String }.joined(separator: " | "))
             guard let host = self.webView.url?.host else { self.showReader(json, suggested: nil); return }
             SuggestedFilters.lookup(host: host, article: obj["article"] as? Bool) { [weak self] keep in
-                self?.showReader(json, suggested: keep)
+                guard let self else { return }
+                self.lastLift = json
+                self.lastSuggested = keep
+                // A site with a filter (the user's or a suggested one) reads straight away;
+                // a new one is picked on the page itself.
+                if RecipeHandler.recipe(forHost: host) != nil || keep != nil {
+                    self.showReader(json, suggested: keep)
+                } else {
+                    self.startPicking(keep: nil, coach: true)
+                }
             }
         }
     }
@@ -410,6 +444,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             list.flatMap { try? JSONSerialization.data(withJSONObject: $0) }
                 .flatMap { String(data: $0, encoding: .utf8) } ?? "null"
         }
+        lastLift = liftJSON
+        lastSuggested = suggested
         let recipe = webView.url?.host.flatMap(RecipeHandler.recipe(forHost:))
         let js = "window.NewsJuice ? (NewsJuice.showReader(\(liftJSON), " +
             "{ recipe: \(json(recipe)), suggested: \(json(suggested)) }), true) : false"
@@ -448,6 +484,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     /// "‹ Page": slides the original site back up over the reader and wakes it.
     private func toPage(animated: Bool = true) {
         stopListening()
+        endPicking()
         readerTrail = 0
         mode = .page
         updateBar(lifted: 0, kinds: 0)
@@ -465,8 +502,101 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
                        options: [], animations: show, completion: done)
     }
 
+    // MARK: Picking on the page
+
+    /// Puts the page into picking mode (pick.js): keep is the filter to start from, or
+    /// nil for a first guess (the suggested filter, else the main text and headline).
+    private func startPicking(keep: [String]?, coach: Bool) {
+        guard let lift = lastLift else { return }
+        let json = { (v: Any?) in
+            v.flatMap { try? JSONSerialization.data(withJSONObject: $0) }.flatMap { String(data: $0, encoding: .utf8) } ?? "null"
+        }
+        readerView.evaluateJavaScript("JSON.stringify(NewsJuice.pickPrep(\(lift), \(json(lastSuggested))))") { [weak self] value, _ in
+            guard let self, let text = value as? String, let data = text.data(using: .utf8),
+                  let prep = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let kinds = prep["kinds"] as? [String: String] else { return }
+            self.pickKeep = keep ?? prep["keep"] as? [String] ?? []
+            self.pickGroups = kinds.count
+            let js = "NewsJuice.pickStart({ keep: \(json(self.pickKeep)), kinds: \(json(kinds)) })"
+            self.webView.evaluateJavaScript(js, in: nil, in: .defaultClient) { _ in }
+            self.mode = .select
+            self.liftButton.isHidden = true
+            self.pickBar.isHidden = false
+            self.pickBar.update(count: self.pickKeep.count, hint: nil)
+            self.bottomBarHeight.constant = -PickBar.height
+            UIView.animate(withDuration: 0.25) { self.view.layoutIfNeeded() }
+            self.updateBar(lifted: self.pickKeep.count, kinds: self.pickGroups)
+            if coach { CoachCard.showOnce(in: self.view, above: self.bottomBar) }
+        }
+    }
+
+    /// pick.js: a style was tapped on the page.
+    func pickToggled(kind: String, on: Bool, spots: Int, keep: [String]) {
+        guard mode == .select else { return }
+        pickKeep = keep
+        let place = spots == 1 ? "1 spot" : "\(spots) spots"
+        pickBar.update(count: keep.count, hint: "\(on ? "Added" : "Removed") \(kind) · \(place) on this page")
+        updateBar(lifted: keep.count, kinds: pickGroups)
+    }
+
+    /// Leaves picking mode without touching the saved filter.
+    private func endPicking() {
+        guard mode == .select || !pickBar.isHidden else { return }
+        webView.evaluateJavaScript("window.NewsJuice && NewsJuice.pickStop && NewsJuice.pickStop()", in: nil, in: .defaultClient) { _ in }
+        pickBar.isHidden = true
+        liftButton.isHidden = false
+        CoachCard.dismiss(in: view)
+        bottomBarHeight.constant = -62
+        if mode == .select { mode = .page }
+    }
+
+    private func cancelPicking() {
+        endPicking()
+        updateBar(lifted: 0, kinds: 0)
+    }
+
+    /// The site's saved groups for its other kinds of page, which picking here leaves alone.
+    private var groupsElsewhere: [String] {
+        guard let host = webView.url?.host, let saved = RecipeHandler.recipe(forHost: host),
+              let lift = lastLift, let data = lift.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
+        let here = Set(((obj["groups"] as? [[String: Any]]) ?? []).compactMap { $0["id"] as? String })
+        return saved.filter { !here.contains($0) }
+    }
+
+    /// Start reading: save the filter and show the filtered page.
+    private func finishPicking() {
+        guard mode == .select, !pickKeep.isEmpty, let lift = lastLift, let host = webView.url?.host else { return }
+        RecipeHandler.save(host: host, keep: groupsElsewhere + pickKeep)
+        endPicking()
+        showReader(lift, suggested: lastSuggested)
+    }
+
+    /// The card list, for text too small to tap on the page.
+    private func pickFromList() {
+        guard mode == .select, let lift = lastLift else { return }
+        let keep = groupsElsewhere + pickKeep
+        let list = (try? JSONSerialization.data(withJSONObject: keep)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        endPicking()
+        readerView.evaluateJavaScript("NewsJuice.showReader(\(lift), { recipe: \(list), mode: 'pick' }), true") { [weak self] _, _ in
+            self?.revealReader()
+        }
+    }
+
+    /// The magnifier in the reader: edit the filter on the page, starting from the picks.
+    private func editOnPage() {
+        stopListening()
+        readerView.evaluateJavaScript("window.NewsJuice && NewsJuice.currentKeep()") { [weak self] value, _ in
+            guard let self else { return }
+            let keep = value as? [String]
+            self.toPage()
+            self.startPicking(keep: keep, coach: false)
+        }
+    }
+
     /// reader.js: it switched between Pick and Read (or the lifted count changed).
     func readerMode(_ name: String, lifted: Int, kinds: Int, source: String) {
+        guard mode != .select else { return }
         mode = name == "read" ? .read : .pick
         if mode != .read { stopListening() }
         filterSource = source
@@ -492,6 +622,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     /// in the reader (it opens filtered again, behind the reader), else the original page.
     /// On the original page: the browser's previous page, and from the first one, Home.
     private func goBack() {
+        if mode == .select { cancelPicking(); return }
         if mode != .page {
             guard readerTrail > 0, webView.canGoBack else { toPage(); return }
             readerTrail -= 1
@@ -506,6 +637,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     /// Back to the list of sites.
     private func goHome() {
         stopListening()
+        endPicking()
         dismiss(animated: true)
     }
 
@@ -827,6 +959,10 @@ final class RecipeHandler: NSObject, WKScriptMessageHandler {
             browser?.readerMode(body["mode"] as? String ?? "pick",
                                 lifted: body["lifted"] as? Int ?? 0, kinds: body["kinds"] as? Int ?? 0,
                                 source: body["source"] as? String ?? "none")
+            return
+        case "pickToggle":
+            browser?.pickToggled(kind: body["kind"] as? String ?? "Text", on: body["on"] as? Bool ?? false,
+                                 spots: body["spots"] as? Int ?? 0, keep: body["keep"] as? [String] ?? [])
             return
         case "listenFrom":
             if let i = body["index"] as? Int { browser?.listenFrom(i) }
@@ -1449,5 +1585,151 @@ enum ClipCache {
             total -= info(file)?.fileSize ?? 0
             try? fm.removeItem(at: file)
         }
+    }
+}
+
+/// The bar under the page while picking on it: what the last tap did, a way to the card
+/// list, and Start reading.
+final class PickBar: UIView {
+    static let height: CGFloat = 104
+    var onStart: (() -> Void)?, onList: (() -> Void)?
+    private let hint = UILabel()
+    private let list = UIButton(type: .system)
+    private let start = UIButton(type: .system)
+
+    private static let tint = UIColor { $0.userInterfaceStyle == .dark
+        ? UIColor(red: 0.70, green: 0.67, blue: 0.62, alpha: 1)
+        : UIColor(red: 0.42, green: 0.39, blue: 0.345, alpha: 1) }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        hint.font = .systemFont(ofSize: 13)
+        hint.textColor = .secondaryLabel
+        hint.lineBreakMode = .byTruncatingTail
+        var lc = UIButton.Configuration.plain()
+        lc.contentInsets = .zero
+        lc.baseForegroundColor = Self.tint
+        lc.attributedTitle = AttributedString("List", attributes: AttributeContainer([.font: UIFont.systemFont(ofSize: 13, weight: .semibold)]))
+        list.configuration = lc
+        list.accessibilityLabel = "Pick from a list instead"
+        list.addAction(UIAction { [weak self] _ in self?.onList?() }, for: .primaryActionTriggered)
+        start.addAction(UIAction { [weak self] _ in self?.onStart?() }, for: .primaryActionTriggered)
+        for v in [hint, list, start] as [UIView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(v)
+        }
+        NSLayoutConstraint.activate([
+            hint.topAnchor.constraint(equalTo: topAnchor),
+            hint.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            hint.trailingAnchor.constraint(lessThanOrEqualTo: list.leadingAnchor, constant: -8),
+            hint.heightAnchor.constraint(equalToConstant: 22),
+            list.centerYAnchor.constraint(equalTo: hint.centerYAnchor),
+            list.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            start.topAnchor.constraint(equalTo: hint.bottomAnchor, constant: 6),
+            start.leadingAnchor.constraint(equalTo: leadingAnchor),
+            start.trailingAnchor.constraint(equalTo: trailingAnchor),
+            start.heightAnchor.constraint(equalToConstant: 54),
+            start.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        update(count: 0, hint: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    func update(count: Int, hint text: String?) {
+        hint.text = text ?? "Tap text to add or remove it"
+        var c = UIButton.Configuration.filled()
+        c.background.cornerRadius = 16
+        c.imagePadding = 10
+        c.titleAlignment = .leading
+        if count > 0 {
+            c.image = UIImage(systemName: "magnifyingglass", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .bold))
+            c.baseBackgroundColor = UIColor(red: 0.91, green: 0.64, blue: 0.09, alpha: 1)
+            c.baseForegroundColor = UIColor(red: 0.114, green: 0.106, blue: 0.094, alpha: 1)
+            c.attributedTitle = AttributedString("Start reading", attributes: AttributeContainer([.font: UIFont.systemFont(ofSize: 17, weight: .semibold)]))
+            c.attributedSubtitle = AttributedString(count == 1 ? "1 style in your filter" : "\(count) styles in your filter",
+                                                    attributes: AttributeContainer([.font: UIFont.systemFont(ofSize: 12, weight: .medium)]))
+        } else {
+            c.baseBackgroundColor = UIColor(red: 0.90, green: 0.875, blue: 0.82, alpha: 1)
+            c.baseForegroundColor = UIColor(red: 0.48, green: 0.45, blue: 0.41, alpha: 1)
+            c.attributedTitle = AttributedString("Tap text to add to your filter",
+                                                 attributes: AttributeContainer([.font: UIFont.systemFont(ofSize: 16, weight: .semibold)]))
+        }
+        start.configuration = c
+        start.isEnabled = count > 0
+    }
+}
+
+/// The one-time explanation the first time someone picks a filter on a page.
+enum CoachCard {
+    private static let seenKey = "NJCoachSeen"
+    private static let tagValue = 7_210
+
+    static func showOnce(in view: UIView, above bar: UIView) {
+        guard !UserDefaults.standard.bool(forKey: seenKey), view.viewWithTag(tagValue) == nil else { return }
+        let card = UIView()
+        card.tag = tagValue
+        card.backgroundColor = UIColor { $0.userInterfaceStyle == .dark
+            ? UIColor(red: 0.17, green: 0.16, blue: 0.14, alpha: 1) : UIColor(red: 0.985, green: 0.975, blue: 0.955, alpha: 1) }
+        card.layer.cornerRadius = 18
+        card.layer.shadowColor = UIColor.black.cgColor
+        card.layer.shadowOpacity = 0.18
+        card.layer.shadowRadius = 18
+        card.layer.shadowOffset = CGSize(width: 0, height: 8)
+        let title = UILabel()
+        title.text = "Tap the text you want to read"
+        title.font = UIFont(name: "Georgia-Bold", size: 20) ?? .boldSystemFont(ofSize: 20)
+        title.numberOfLines = 0
+        let steps = ["Tap any text on the page.",
+                     "Everything in the same style lights up and joins your filter.",
+                     "Tap Start reading. We remember it for this site."]
+        let list = UIStackView(arrangedSubviews: steps.enumerated().map { i, text in
+            let l = UILabel()
+            l.numberOfLines = 0
+            l.font = .systemFont(ofSize: 15)
+            l.text = "\(i + 1).  \(text)"
+            return l
+        })
+        list.axis = .vertical
+        list.spacing = 8
+        var bc = UIButton.Configuration.filled()
+        bc.baseBackgroundColor = UIColor(red: 0.91, green: 0.64, blue: 0.09, alpha: 1)
+        bc.baseForegroundColor = UIColor(red: 0.114, green: 0.106, blue: 0.094, alpha: 1)
+        bc.background.cornerRadius = 12
+        bc.attributedTitle = AttributedString("Got it", attributes: AttributeContainer([.font: UIFont.systemFont(ofSize: 16, weight: .semibold)]))
+        let ok = UIButton(configuration: bc)
+        ok.addAction(UIAction { _ in
+            UserDefaults.standard.set(true, forKey: seenKey)
+            dismiss(in: view)
+        }, for: .primaryActionTriggered)
+        let stack = UIStackView(arrangedSubviews: [title, list, ok])
+        stack.axis = .vertical
+        stack.spacing = 14
+        stack.setCustomSpacing(18, after: list)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(stack)
+        card.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(card)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -16),
+            ok.heightAnchor.constraint(equalToConstant: 46),
+            card.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            card.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            card.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -12),
+        ])
+        card.alpha = 0
+        card.transform = CGAffineTransform(translationX: 0, y: 20)
+        UIView.animate(withDuration: 0.35, delay: 0.2, usingSpringWithDamping: 0.85, initialSpringVelocity: 0, options: []) {
+            card.alpha = 1
+            card.transform = .identity
+        }
+    }
+
+    static func dismiss(in view: UIView) {
+        guard let card = view.viewWithTag(tagValue) else { return }
+        UIView.animate(withDuration: 0.2, animations: { card.alpha = 0 }, completion: { _ in card.removeFromSuperview() })
     }
 }

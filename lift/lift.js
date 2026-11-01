@@ -148,6 +148,7 @@
         tag: el.tagName.toLowerCase(),
         size: size, bold: bold, italic: italic, family: family, link: link,
         color: st.color, transform: st.textTransform,
+        el: el,
       });
     }
     return blocks;
@@ -198,6 +199,9 @@
     var opts = Object.assign({}, DEFAULTS, options || {});
     var blocks = collectBlocks(document.body, opts);
     var groups = groupBlocks(blocks, opts);
+    // For pick.js: the page element and style group of each block, in order.
+    window.NewsJuice._els = blocks.map(function (b) { return b.el; });
+    window.NewsJuice._gs = blocks.map(function (b) { return b.g; });
     return {
       ok: groups.length > 0,
       reason: groups.length ? undefined : 'no text found',
