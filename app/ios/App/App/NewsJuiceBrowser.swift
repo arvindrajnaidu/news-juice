@@ -21,6 +21,10 @@ import CryptoKit
 
 /// Root view controller (created in SceneDelegate) so the local plugin gets registered.
 class MainViewController: CAPBridgeViewController {
+    #if DEBUG
+    private static var openedLaunchURL = false
+    #endif
+
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(NewsJuiceBrowserPlugin())
     }
@@ -31,9 +35,10 @@ class MainViewController: CAPBridgeViewController {
         #if DEBUG
         // `xcrun simctl launch <device> com.buzzie.newslens -NJOpenURL https://...`
         // opens a page straight away, for testing.
-        if let url = UserDefaults.standard.string(forKey: "NJOpenURL").flatMap(URL.init(string:)),
+        // (Once: a launch argument can't be removed from UserDefaults.)
+        if !Self.openedLaunchURL, let url = UserDefaults.standard.string(forKey: "NJOpenURL").flatMap(URL.init(string:)),
            presentedViewController == nil {
-            UserDefaults.standard.removeObject(forKey: "NJOpenURL")
+            Self.openedLaunchURL = true
             present(BrowserViewController(url: url), animated: false)
         }
         #endif
@@ -79,12 +84,10 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     private var mode = Mode.page
 
     private let backButton = UIButton(type: .system)
-    private let pageButton = UIButton(type: .system)
     private var canGoBackObservation: NSKeyValueObservation?
     private var lastCounts = (lifted: 0, kinds: 0)
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
-    private let homeButton = UIButton(type: .system)
     private let changeButton = UIButton(type: .system)
     private let shareButton = UIButton(type: .system)
     private let listenButton = UIButton(type: .system)
@@ -107,6 +110,9 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     /// While the reader is up, the site can't navigate on its own (redirects, auto-refresh,
     /// reloads); only these, and going back or forward, get through.
     private var appNavigation = false
+    /// How many articles deep the reader is from links followed inside it; back walks
+    /// these, then leaves the filtered view for the original page.
+    private var readerTrail = 0
     /// Where the reader's filter came from: "own", "suggested" or "none".
     private var filterSource = "none"
 
@@ -152,6 +158,9 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
+        let pageEdge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(pageEdgeSwipe(_:)))
+        pageEdge.edges = .left
+        webView.addGestureRecognizer(pageEdge)
         #if DEBUG
         if #available(iOS 16.4, *) { webView.isInspectable = true }
         #endif
@@ -280,6 +289,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         backButton.configuration = back
         backButton.accessibilityLabel = "Back"
         backButton.addAction(UIAction { [weak self] _ in self?.goBack() }, for: .primaryActionTriggered)
+        backButton.addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: #selector(backHeld(_:))))
 
         titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         titleLabel.text = startURL.host
@@ -303,14 +313,12 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             button.widthAnchor.constraint(equalToConstant: 44).isActive = true
             button.heightAnchor.constraint(equalToConstant: 44).isActive = true
         }
-        iconButton(pageButton, "globe", "Show original page") { [weak self] in self?.toPage() }
         iconButton(changeButton, "slider.horizontal.3", "Change filter") { [weak self] in
             self?.readerView.evaluateJavaScript("window.NewsJuice && NewsJuice.setMode('pick')")
         }
         iconButton(shareButton, "square.and.arrow.up", "Share filter") { [weak self] in self?.shareFilter() }
         iconButton(listenButton, "headphones", "Listen") { [weak self] in self?.listen() }
-        iconButton(homeButton, "house", "Home") { [weak self] in self?.stopListening(); self?.dismiss(animated: true) }
-        let right = UIStackView(arrangedSubviews: [listenButton, shareButton, pageButton, changeButton, homeButton])
+        let right = UIStackView(arrangedSubviews: [listenButton, shareButton, changeButton])
         right.spacing = 0
 
         for v in [backButton, titles, right, rule] as [UIView] {
@@ -357,9 +365,10 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     /// Shows what the top bar should for the current mode.
     private func updateBar(lifted: Int, kinds: Int) {
         lastCounts = (lifted, kinds)
-        backButton.isHidden = !webView.canGoBack
-        pageButton.isHidden = mode == .page
-        homeButton.isHidden = mode != .page
+        // One stack: Home, the site's pages, the filtered view. Back always has somewhere
+        // to go; holding it goes straight Home.
+        backButton.accessibilityLabel = mode != .page ? (readerTrail > 0 ? "Previous article" : "Original page")
+            : webView.canGoBack ? "Back" : "Your sites"
         changeButton.isHidden = mode != .read
         shareButton.isHidden = mode == .page
         listenButton.isHidden = mode != .read || narrator.isOn
@@ -439,6 +448,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     /// "‹ Page": slides the original site back up over the reader and wakes it.
     private func toPage(animated: Bool = true) {
         stopListening()
+        readerTrail = 0
         mode = .page
         updateBar(lifted: 0, kinds: 0)
         webView.setAllMediaPlaybackSuspended(false)
@@ -467,6 +477,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     /// recipe, keep the reader up and lift the new page as soon as it loads.
     func openFromReader(_ url: URL) {
         stopListening()
+        readerTrail += 1
         liftOnLoad = url.host.map(Self.hasFilter) ?? false
         appNavigation = true
         webView.load(URLRequest(url: url))
@@ -477,13 +488,38 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         goBack()
     }
 
-    /// The previous page; from the reader it opens lifted again, behind the reader.
+    /// Back. In the filtered view: the previous filtered article if a link was followed
+    /// in the reader (it opens filtered again, behind the reader), else the original page.
+    /// On the original page: the browser's previous page, and from the first one, Home.
     private func goBack() {
-        guard webView.canGoBack else { return }
+        if mode != .page {
+            guard readerTrail > 0, webView.canGoBack else { toPage(); return }
+            readerTrail -= 1
+        }
+        guard webView.canGoBack else { goHome(); return }
         stopListening()
         if mode != .page { liftOnLoad = siteHasRecipe }
         appNavigation = true
         webView.goBack()
+    }
+
+    /// Back to the list of sites.
+    private func goHome() {
+        stopListening()
+        dismiss(animated: true)
+    }
+
+    @objc private func backHeld(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        goHome()
+    }
+
+    /// Swiping in from the left edge of the page with no history left goes Home (the
+    /// web view's own swipe handles going back while there's history).
+    @objc private func pageEdgeSwipe(_ gesture: UIScreenEdgePanGestureRecognizer) {
+        guard gesture.state == .recognized, mode == .page, !webView.canGoBack else { return }
+        goHome()
     }
 
     /// Tells the start screen which site was opened (its address after any redirect, and
