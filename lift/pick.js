@@ -17,9 +17,9 @@
   var CSS = [
     'html.nj-picking img,html.nj-picking video,html.nj-picking iframe,html.nj-picking picture,',
     'html.nj-picking canvas,html.nj-picking svg{opacity:.2!important;transition:opacity .25s}',
-    // The whole layer multiplies with the page, so washes tint the text without hiding it.
-    '#nj-pick{position:absolute;left:0;top:0;width:0;height:0;z-index:2147483646;pointer-events:none;',
-    '  mix-blend-mode:multiply}',
+    // No blend modes: some pages composite their text in layers a blend can't reach, and
+    // the wash then hides the text. A see-through tint works everywhere.
+    '#nj-pick{position:absolute;left:0;top:0;width:0;height:0;z-index:2147483646;pointer-events:none}',
     // Under the boxes, text outside the filter is washed out, so the picks stand out.
     '#nj-pick-wash{position:absolute;left:0;top:0;width:0;height:0;z-index:2147483645;pointer-events:none}',
     '.nj-wash{position:absolute;background:rgba(246,243,236,.6);border-radius:3px;transition:opacity .25s}',
@@ -30,7 +30,7 @@
     // Text in the filter gets an amber wash.
     '.nj-box::before{content:"";position:absolute;inset:-2px;border-radius:3px;background:transparent;',
     '  transition:background .25s}',
-    '.nj-box.on::before{background:#fbe0a0}',
+    '.nj-box.on::before{background:rgba(232,163,23,.2)}',
     '.nj-box::after{content:"";position:absolute;left:-6px;top:-2px;bottom:-2px;width:3px;border-radius:2px;',
     '  background:#e8a317;transform:scaleY(0);transition:transform .25s}',
     '.nj-box.on{outline-color:transparent}.nj-box.on::after{transform:none}',
