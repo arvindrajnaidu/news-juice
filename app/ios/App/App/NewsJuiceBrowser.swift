@@ -1002,7 +1002,7 @@ final class Narrator: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelega
     private var parts: [Part] = []
     private var index = 0
     private var voice: AVSpeechSynthesisVoice?
-    private var title = "", site = ""
+    private var title = "", site = "", language = "en"
     /// Audio fetched for each part, and the fetches under way.
     private var clips: [Int: Data] = [:]
     private var fetches: [Int: Task<Data, Error>] = [:]
@@ -1032,7 +1032,9 @@ final class Narrator: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelega
         self.site = site
         clips = [:]
         usingAI = true
-        voice = Self.voice(for: parts.prefix(20).map(\.text).joined(separator: " "))
+        let sample = parts.prefix(20).map(\.text).joined(separator: " ")
+        language = NLLanguageRecognizer.dominantLanguage(for: sample)?.rawValue ?? "en"
+        voice = Self.voice(for: sample)
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
         try? AVAudioSession.sharedInstance().setActive(true)
         isOn = true
@@ -1135,7 +1137,7 @@ final class Narrator: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelega
     /// The AI audio for part i: already fetched, under way, or fetched now.
     @MainActor private func clip(_ i: Int) async throws -> Data {
         if let data = clips[i] { return data }
-        let task = fetches[i] ?? Task { try await AIVoice.speak(parts[i].text, head: parts[i].head, story: title, site: site) }
+        let task = fetches[i] ?? Task { try await AIVoice.speak(parts[i].text, head: parts[i].head, story: title, site: site, lang: language) }
         fetches[i] = task
         defer { fetches[i] = nil }
         let data = try await task.value
@@ -1230,13 +1232,13 @@ enum AIVoice {
         return id
     }
 
-    static func speak(_ text: String, head: Bool, story: String, site: String) async throws -> Data {
+    static func speak(_ text: String, head: Bool, story: String, site: String, lang: String) async throws -> Data {
         let spoken = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         let story = String(story.prefix(200))
         // Everything that shapes the audio, so a cached reading matches a fresh one.
-        let key = ClipCache.key([ClipCache.version, voice ?? "", head ? "head" : "", story, site, spoken])
+        let key = ClipCache.key([ClipCache.version, voice ?? "", lang, head ? "head" : "", story, site, spoken])
         if let data = ClipCache.get(key) { return data }
-        let data = try await fetch(spoken, head: head, story: story, site: site)
+        let data = try await fetch(spoken, head: head, story: story, site: site, lang: lang)
         ClipCache.put(key, data)
         #if DEBUG
         // -NJSaveClips YES: keep each reading in Documents too, for comparing voices.
@@ -1258,14 +1260,14 @@ enum AIVoice {
         #endif
     }
 
-    private static func fetch(_ text: String, head: Bool, story: String, site: String) async throws -> Data {
+    private static func fetch(_ text: String, head: Bool, story: String, site: String, lang: String) async throws -> Data {
         let token = try await AppCheck.appCheck().token(forcingRefresh: false).token
         var request = URLRequest(url: endpoint, timeoutInterval: 20)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(token, forHTTPHeaderField: "X-Firebase-AppCheck")
         request.setValue(installID, forHTTPHeaderField: "X-NL-Device")
-        var body: [String: Any] = ["text": String(text.prefix(4000)), "head": head, "story": story, "site": site]
+        var body: [String: Any] = ["text": String(text.prefix(4000)), "head": head, "story": story, "site": site, "lang": lang]
         if let voice { body["voice"] = voice }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -1373,7 +1375,7 @@ final class PlayerBar: UIView {
 /// Keyed by a SHA-256 of what shapes the audio; trimmed oldest-first to 100 MB.
 enum ClipCache {
     /// Bump when the server's voice or direction changes, so old readings aren't reused.
-    static let version = "anchor-1"
+    static let version = "gemini-1"
     private static let limit = 100 * 1024 * 1024
     private static let folder: URL = {
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]

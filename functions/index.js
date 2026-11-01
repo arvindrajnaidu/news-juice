@@ -1,7 +1,10 @@
-// News Lens's one server function: reads a paragraph of a filtered article aloud with
-// OpenAI's steerable speech model and returns the audio.
+// News Lens's one server function: reads a paragraph of a filtered article aloud with a
+// steerable speech model and returns the audio. PROVIDER picks the model:
+// - 'gemini': Gemini Flash TTS through Google Cloud Text-to-Speech, called as this
+//   function's own service account (no key).
+// - 'openai': OpenAI's gpt-4o-mini-tts; its key lives in Secret Manager (OPENAI_API_KEY).
+// The app never sees a key either way.
 //
-// - The OpenAI key lives in Secret Manager (OPENAI_API_KEY); the app never sees it.
 // - Only the real app gets in: every request carries a Firebase App Check token
 //   (App Attest on devices, a registered debug token in the Simulator).
 // - Each install has a daily allowance, counted in Firestore by the install's random id.
@@ -18,7 +21,22 @@ const admin = require('firebase-admin');
 admin.initializeApp();
 const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
 
-const MODEL = 'gpt-4o-mini-tts';
+const PROVIDER = 'gemini';
+const PROVIDERS = {
+  gemini: {
+    model: 'gemini-2.5-flash-tts',
+    voice: 'Kore',
+    // Voices a request may ask for instead (for comparing them).
+    voices: ['Kore', 'Aoede', 'Leda', 'Zephyr', 'Charon', 'Puck', 'Fenrir', 'Orus'],
+    speak: geminiSpeak,
+  },
+  openai: {
+    model: 'gpt-4o-mini-tts',
+    voice: 'coral',
+    voices: ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse'],
+    speak: openaiSpeak,
+  },
+};
 const CACHE_BUCKET = 'news-lens-4ea95-tts-cache';
 // Bump to start a fresh cache (say, after changing the model's output format).
 const CACHE_VERSION = 1;
@@ -26,9 +44,6 @@ const MAX_CHARS = 4000;
 // About 30 minutes of speech a day per install (roughly 15 characters a second).
 const DAILY_CHARS = 27000;
 
-const VOICE = 'coral';
-// Voices a request may ask for instead (for comparing them).
-const VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse'];
 const INSTRUCTIONS = [
   'Voice: a professional broadcast news anchor, like a primetime TV news presenter:',
   'authoritative, clear and confident.',
@@ -62,17 +77,19 @@ exports.speak = onRequest(
     }
 
     const device = req.get('X-NL-Device') || '';
-    const { text, head, voice, story, site } = req.body || {};
+    const { text, head, voice, story, site, lang } = req.body || {};
     if (!/^[A-Za-z0-9-]{16,64}$/.test(device)) return res.status(400).json({ error: 'device' });
     if (typeof text !== 'string' || !text.trim() || text.length > MAX_CHARS) {
       return res.status(400).json({ error: 'text' });
     }
 
     const spoken = text.replace(/\s+/g, ' ').trim();
-    const chosen = VOICES.includes(voice) ? voice : VOICE;
+    const provider = PROVIDERS[PROVIDER];
+    const chosen = provider.voices.includes(voice) ? voice : provider.voice;
+    const language = LANGUAGES[lang] || 'en-US';
     const instructions = INSTRUCTIONS + context(story, site) + (head ? HEADLINE : '');
     const key = crypto.createHash('sha256')
-      .update(JSON.stringify([CACHE_VERSION, MODEL, chosen, instructions, spoken]))
+      .update(JSON.stringify([CACHE_VERSION, PROVIDER, provider.model, chosen, language, instructions, spoken]))
       .digest('hex');
     const cached = admin.storage().bucket(CACHE_BUCKET).file(`tts-cache/${key}.mp3`);
 
@@ -95,30 +112,61 @@ exports.speak = onRequest(
     });
     if (!allowed) return res.status(429).json({ error: 'daily limit' });
 
-    const reply = await fetch('https://api.openai.com/v1/audio/speech', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${OPENAI_API_KEY.value()}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: MODEL,
-        voice: chosen,
-        input: spoken,
-        instructions,
-        response_format: 'mp3',
-      }),
-    });
-    if (!reply.ok) {
-      logger.error('OpenAI speech failed', reply.status, await reply.text());
+    let audio;
+    try {
+      audio = await provider.speak({ model: provider.model, voice: chosen, language, instructions, text: spoken });
+    } catch (e) {
+      logger.error('speech failed', PROVIDER, e.message);
       // Nothing was read, so give the allowance back.
       await ref.set({ chars: admin.firestore.FieldValue.increment(-spoken.length) }, { merge: true });
       return res.status(502).json({ error: 'voice' });
     }
-    const audio = Buffer.from(await reply.arrayBuffer());
     await cached.save(audio, { contentType: 'audio/mpeg', resumable: false })
       .catch((e) => logger.warn('speak cache write failed', e.message));
     logger.info('speak cache', { cache: 'miss', chars: spoken.length });
     return sendAudio(res, audio, 'miss');
   }
 );
+
+// The page's language (from the app) as a speech locale; anything else reads as en-US.
+const LANGUAGES = {
+  en: 'en-US', hi: 'hi-IN', bn: 'bn-IN', ta: 'ta-IN', te: 'te-IN', mr: 'mr-IN', gu: 'gu-IN',
+  kn: 'kn-IN', ml: 'ml-IN', ur: 'ur-PK', ar: 'ar-EG', fr: 'fr-FR', de: 'de-DE', es: 'es-ES',
+  it: 'it-IT', pt: 'pt-BR', nl: 'nl-NL', ja: 'ja-JP', ko: 'ko-KR', zh: 'cmn-CN',
+};
+
+async function geminiSpeak({ model, voice, language, instructions, text }) {
+  // This function's own service account, from the metadata server.
+  const auth = await fetch(
+    'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token',
+    { headers: { 'Metadata-Flavor': 'Google' } }
+  ).then((r) => r.json());
+  const reply = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${auth.access_token}`,
+      'Content-Type': 'application/json',
+      'x-goog-user-project': process.env.GCLOUD_PROJECT || 'news-lens-4ea95',
+    },
+    body: JSON.stringify({
+      input: { prompt: instructions, text },
+      voice: { languageCode: language, name: voice, modelName: model },
+      audioConfig: { audioEncoding: 'MP3' },
+    }),
+  });
+  if (!reply.ok) throw new Error(`${reply.status} ${await reply.text()}`);
+  return Buffer.from((await reply.json()).audioContent, 'base64');
+}
+
+async function openaiSpeak({ model, voice, instructions, text }) {
+  const reply = await fetch('https://api.openai.com/v1/audio/speech', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY.value()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, voice, input: text, instructions, response_format: 'mp3' }),
+  });
+  if (!reply.ok) throw new Error(`${reply.status} ${await reply.text()}`);
+  return Buffer.from(await reply.arrayBuffer());
+}
 
 function sendAudio(res, audio, cache) {
   res.set('Content-Type', 'audio/mpeg');
