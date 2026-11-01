@@ -288,7 +288,7 @@
       return '<button class="nj-card role-' + roleOf(g, sizes.base, sizes.headSize) + (on ? ' on' : '') + '" data-g="' + esc(g.id) +
         '" data-kind="' + esc(kind) + '" aria-pressed="' + on + '" style="' + esc(vars) + '">' +
         '<span class="nj-sample">' + esc(g.sample) + '</span>' +
-        '<span class="nj-badge">' + (on ? 'Kept · ' : '') + esc(kind) + ' · ' + g.count + '</span></button>';
+        '<span class="nj-badge">' + (on ? 'In filter · ' : '') + esc(kind) + ' · ' + g.count + '</span></button>';
     }).join('');
   }
 
@@ -352,8 +352,8 @@
       readBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" ' +
         'stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="M15.5 15.5L21 21"></path></svg>' +
         '<span class="nj-label">' + (keep.length
-          ? 'Start reading<small>' + keep.length + (keep.length === 1 ? ' style' : ' styles') + ' kept</small>'
-          : 'Pick something to keep') + '</span>';
+          ? 'Start reading<small>' + keep.length + (keep.length === 1 ? ' style' : ' styles') + ' in your filter</small>'
+          : 'Tap text to add to your filter') + '</span>';
       readBtn.disabled = !keep.length;
       resetBtn.hidden = !suggested || sameSet(keep, suggested);
     };
@@ -433,7 +433,7 @@
       var on = i < 0;
       card.classList.toggle('on', on);
       card.setAttribute('aria-pressed', on);
-      card.querySelector('.nj-badge').textContent = (on ? 'Kept · ' : '') + card.getAttribute('data-kind') + ' · ' + groups[id].count;
+      card.querySelector('.nj-badge').textContent = (on ? 'In filter · ' : '') + card.getAttribute('data-kind') + ' · ' + groups[id].count;
       updateButton();
       report();
     });

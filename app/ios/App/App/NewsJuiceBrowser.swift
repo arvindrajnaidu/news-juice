@@ -374,7 +374,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         listenButton.isHidden = mode != .read || narrator.isOn
         switch mode {
         case .page: subtitleLabel.text = "Original page"
-        case .pick: subtitleLabel.text = "\(lifted) of \(kinds) styles kept"
+        case .pick: subtitleLabel.text = "\(lifted) of \(kinds) styles in filter"
         case .read: subtitleLabel.text = filterSource == "suggested" ? "Suggested filter" : "Filtered · saved for this site"
         }
     }
@@ -558,7 +558,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             let site = RecipeHandler.normalize(host)
             NSLog("NewsJuice sharing %@", link.absoluteString)
             let sheet = UIActivityViewController(
-                activityItems: ["My News Lens filter for \(site): it keeps just the text worth reading.", link],
+                activityItems: ["My News Lens filter for \(site): just the text worth reading.", link],
                 applicationActivities: nil)
             sheet.popoverPresentationController?.sourceView = self.shareButton
             self.present(sheet, animated: true)
@@ -918,10 +918,10 @@ enum ShareLinks {
         while let next = top.presentedViewController { top = next }
         let site = RecipeHandler.normalize(host)
         let replaces = RecipeHandler.recipe(forHost: host) != nil
-        let kinds = keep.count == 1 ? "1 kind" : "\(keep.count) kinds"
+        let kinds = keep.count == 1 ? "1 style" : "\(keep.count) styles"
         let alert = UIAlertController(
             title: "Use this filter for \(site)?",
-            message: "Someone shared a News Lens filter that keeps \(kinds) of text."
+            message: "It shows \(kinds) of text."
                 + (replaces ? " It replaces your own filter for this site." : ""),
             preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
