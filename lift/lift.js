@@ -212,6 +212,10 @@
       groups: groups,
       blocks: blocks.map(function (b) {
         var out = { g: b.g, text: b.text, tag: b.tag };
+        // Where it sits on the page (document y, x), for checking reading order.
+        var rect = b.el.getBoundingClientRect();
+        out.y = Math.round(rect.top + scrollY);
+        out.x = Math.round(rect.left + scrollX);
         if (b.href) out.href = b.href;
         else if (b.links.length) out.links = b.links;
         return out;
