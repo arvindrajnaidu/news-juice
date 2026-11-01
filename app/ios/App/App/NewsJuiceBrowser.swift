@@ -150,6 +150,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         super.init(nibName: nil, bundle: nil)
         liftOnLoad = filter
         modalPresentationStyle = .fullScreen
+        transitioningDelegate = SideSlide.shared
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -231,7 +232,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         // The site sits on top of the reader and slides away to reveal it; the site ends
         // above the bottom bar, the reader runs to the bottom of the screen.
         makeReaderBar()
-        for v in [readerView!, webView!, topBar, progress, bottomBar, readerBar, player] as [UIView] {
+        // The reader sits above the page and slides in over it from the right.
+        for v in [webView!, bottomBar, readerView!, readerBar, player, topBar, progress] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
@@ -507,11 +509,20 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         webView.pauseAllMediaPlayback()
         webView.setAllMediaPlaybackSuspended(true)
         guard !webView.isHidden else { return }
-        let drop = CGAffineTransform(translationX: 0, y: view.bounds.height)
-        UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0, options: []) {
-            self.webView.transform = drop
-            self.webView.alpha = 0
-            self.bottomBar.transform = CGAffineTransform(translationX: 0, y: self.bottomBar.bounds.height)
+        // Like a push: the reader slides in from the right over the page, which eases left.
+        let width = view.bounds.width
+        let still = UIAccessibility.isReduceMotionEnabled
+        readerView.transform = still ? .identity : CGAffineTransform(translationX: width, y: 0)
+        readerView.alpha = still ? 0 : 1
+        readerBar.alpha = 0
+        UIView.animate(withDuration: still ? 0.25 : 0.4, delay: 0, options: [.curveEaseOut]) {
+            self.readerView.transform = .identity
+            self.readerView.alpha = 1
+            self.readerBar.alpha = 1
+            if !still {
+                self.webView.transform = CGAffineTransform(translationX: -width * 0.3, y: 0)
+                self.bottomBar.transform = CGAffineTransform(translationX: -width * 0.3, y: 0)
+            }
             self.bottomBar.alpha = 0
         } completion: { _ in
             guard self.mode != .page else { return }
@@ -528,16 +539,24 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         updateBar(lifted: 0, kinds: 0)
         webView.setAllMediaPlaybackSuspended(false)
         webView.isHidden = false
+        let width = view.bounds.width
+        let still = UIAccessibility.isReduceMotionEnabled
         let show = {
             self.webView.transform = .identity
             self.webView.alpha = 1
             self.bottomBar.transform = .identity
             self.bottomBar.alpha = 1
+            // The reader slides back out to the right (or fades, with Reduce Motion).
+            if still { self.readerView.alpha = 0 } else { self.readerView.transform = CGAffineTransform(translationX: width, y: 0) }
         }
-        let done = { (_: Bool) in if self.mode == .page { self.readerView.isHidden = true } }
+        let done = { (_: Bool) in
+            if self.mode == .page { self.readerView.isHidden = true }
+            self.readerView.transform = .identity
+            self.readerView.alpha = 1
+        }
         guard animated else { show(); done(true); return }
-        UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0,
-                       options: [], animations: show, completion: done)
+        UIView.animate(withDuration: still ? 0.25 : 0.4, delay: 0, options: [.curveEaseOut],
+                       animations: show, completion: done)
     }
 
     // MARK: Picking on the page
@@ -1868,5 +1887,62 @@ enum CoachCard {
     static func dismiss(in view: UIView) {
         guard let card = view.viewWithTag(tagValue) else { return }
         UIView.animate(withDuration: 0.2, animations: { card.alpha = 0 }, completion: { _ in card.removeFromSuperview() })
+    }
+}
+
+/// Presents the browser like a navigation push: it slides in from the right over Home,
+/// which eases left, and slides back out to the right. With Reduce Motion, a crossfade.
+final class SideSlide: NSObject, UIViewControllerTransitioningDelegate, UIViewControllerAnimatedTransitioning {
+    static let shared = SideSlide()
+    private var presenting = true
+
+    func animationController(forPresented presented: UIViewController, presenting: UIViewController,
+                             source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        self.presenting = true
+        return self
+    }
+
+    func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        presenting = false
+        return self
+    }
+
+    func transitionDuration(using context: UIViewControllerContextTransitioning?) -> TimeInterval {
+        UIAccessibility.isReduceMotionEnabled ? 0.25 : 0.38
+    }
+
+    func animateTransition(using context: UIViewControllerContextTransitioning) {
+        guard let from = context.view(forKey: .from) ?? context.viewController(forKey: .from)?.view,
+              let to = context.view(forKey: .to) ?? context.viewController(forKey: .to)?.view else {
+            context.completeTransition(false)
+            return
+        }
+        let container = context.containerView
+        let width = container.bounds.width
+        let still = UIAccessibility.isReduceMotionEnabled
+        if presenting {
+            to.frame = context.finalFrame(for: context.viewController(forKey: .to)!)
+            container.addSubview(to)
+            to.transform = still ? .identity : CGAffineTransform(translationX: width, y: 0)
+            to.alpha = still ? 0 : 1
+        } else {
+            container.insertSubview(to, belowSubview: from)
+            to.transform = still ? .identity : CGAffineTransform(translationX: -width * 0.3, y: 0)
+        }
+        UIView.animate(withDuration: transitionDuration(using: context), delay: 0, options: [.curveEaseOut]) {
+            if self.presenting {
+                to.transform = .identity
+                to.alpha = 1
+                if !still { from.transform = CGAffineTransform(translationX: -width * 0.3, y: 0) }
+            } else {
+                to.transform = .identity
+                if still { from.alpha = 0 } else { from.transform = CGAffineTransform(translationX: width, y: 0) }
+            }
+        } completion: { _ in
+            from.transform = .identity
+            from.alpha = 1
+            to.transform = .identity
+            context.completeTransition(!context.transitionWasCancelled)
+        }
     }
 }
