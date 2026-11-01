@@ -66,30 +66,40 @@
     var shield = document.createElement('div');
     shield.id = 'nj-pick-shield';
     shield.setAttribute('aria-hidden', 'true');
-    // Ads and banners that turn up later are hidden as they arrive.
     var hidden = hideFixed([]);
-    var sweep = setInterval(function () { hideFixed(hidden); }, 1000);
     document.documentElement.classList.add('nj-picking');
     document.documentElement.append(style, layer, shield);
 
     // One box per block, in document coordinates, so it scrolls with the page.
     var boxes = [];
-    var sx = scrollX, sy = scrollY;
     els.forEach(function (el, i) {
       if (!el || !el.isConnected) return;
-      var r = el.getBoundingClientRect();
-      if (r.width < 2 || r.height < 2) return;
       var g = gs[i];
       var box = document.createElement('div');
       box.className = 'nj-box';
-      box.style.cssText = 'left:' + (r.left + sx) + 'px;top:' + (r.top + sy) + 'px;width:' + r.width + 'px;height:' + r.height + 'px';
       box.setAttribute('role', 'button');
       // VoiceOver activates the box itself (the shield is hidden from it).
       box.addEventListener('click', function (e) { e.stopPropagation(); toggle(g); });
       layer.appendChild(box);
-      boxes.push({ g: g, box: box, top: r.top + sy, left: r.left + sx, w: r.width, h: r.height,
-        text: (el.innerText || '').trim().slice(0, 80) });
+      boxes.push({ g: g, el: el, box: box, top: 0, left: 0, w: 0, h: 0, text: (el.innerText || '').trim().slice(0, 80) });
     });
+
+    // Pages keep moving after they load (images and ads arrive, fonts swap), so the
+    // boxes follow their text, and ads and banners that turn up later are hidden.
+    function place() {
+      var sx = scrollX, sy = scrollY;
+      boxes.forEach(function (b) {
+        var r = b.el.isConnected ? b.el.getBoundingClientRect() : { width: 0, height: 0, left: 0, top: 0 };
+        var shown = r.width >= 2 && r.height >= 2;
+        b.left = r.left + sx; b.top = r.top + sy; b.w = shown ? r.width : 0; b.h = shown ? r.height : 0;
+        b.box.style.cssText = shown
+          ? 'left:' + b.left + 'px;top:' + b.top + 'px;width:' + b.w + 'px;height:' + b.h + 'px'
+          : 'display:none';
+      });
+    }
+    place();
+    var sweep = setInterval(function () { hideFixed(hidden); place(); }, 500);
+    addEventListener('resize', place);
 
     var spots = {};
     boxes.forEach(function (b) { spots[b.g] = (spots[b.g] || 0) + 1; });
@@ -131,13 +141,14 @@
     });
 
     paint();
-    state = { style: style, layer: layer, shield: shield, hidden: hidden, sweep: sweep };
+    state = { style: style, layer: layer, shield: shield, hidden: hidden, sweep: sweep, place: place };
     return true;
   }
 
   function stop() {
     if (!state) return;
     clearInterval(state.sweep);
+    removeEventListener('resize', state.place);
     [state.style, state.layer, state.shield].forEach(function (n) { n.remove(); });
     state.hidden.forEach(function (h) {
       if (h[1]) h[0].style.setProperty('visibility', h[1], h[2]);
