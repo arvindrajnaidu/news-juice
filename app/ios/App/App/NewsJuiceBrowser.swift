@@ -313,7 +313,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             button.widthAnchor.constraint(equalToConstant: 44).isActive = true
             button.heightAnchor.constraint(equalToConstant: 44).isActive = true
         }
-        iconButton(changeButton, "slider.horizontal.3", "Change filter") { [weak self] in
+        iconButton(changeButton, "magnifyingglass", "Edit filter") { [weak self] in
             self?.readerView.evaluateJavaScript("window.NewsJuice && NewsJuice.setMode('pick')")
         }
         iconButton(shareButton, "square.and.arrow.up", "Share filter") { [weak self] in self?.shareFilter() }
@@ -349,7 +349,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     private func makeLiftButton() {
         var c = UIButton.Configuration.filled()
         c.title = "Filter"
-        c.image = UIImage(systemName: "line.3.horizontal.decrease",
+        c.image = UIImage(systemName: "magnifyingglass",
                           withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .bold))
         c.imagePadding = 8
         c.baseBackgroundColor = Self.accent
