@@ -1,8 +1,8 @@
 // News Lens: pick a filter on the real page.
 //
 // Runs in the same isolated content world as lift.js, after a lift: every text block
-// lift.js found gets a box over it (dashed outline, a tag naming its kind), the rest
-// of the page is veiled and its images faded, and a transparent shield on top takes
+// lift.js found gets a box over it (a dashed outline; amber when in the filter), the rest
+// of the page has its images faded and fixed layers hidden, and a transparent shield on top takes
 // every tap, so the site's own scripts never see them. Tapping text toggles its whole
 // style group: every block in that style lights up (or goes out) together.
 //
@@ -30,10 +30,6 @@
     '.nj-box::after{content:"";position:absolute;left:-6px;top:-2px;bottom:-2px;width:3px;border-radius:2px;',
     '  background:#e8a317;transform:scaleY(0);transition:transform .25s}',
     '.nj-box.on{outline-color:transparent}.nj-box.on::after{transform:none}',
-    '.nj-tag{position:absolute;left:-2px;top:-19px;font:600 10px/15px -apple-system,system-ui,sans-serif;',
-    '  padding:0 6px;border-radius:8px;background:#e6dfd2;color:#6b6458;white-space:nowrap;opacity:.55;',
-    '  transition:background .25s,color .25s,opacity .25s}',
-    '.nj-box.on .nj-tag{background:#e8a317;color:#1d1b18;opacity:1}',
   ].join('\n');
 
   function post(msg) {
@@ -88,12 +84,6 @@
       box.className = 'nj-box';
       box.style.cssText = 'left:' + (r.left + sx) + 'px;top:' + (r.top + sy) + 'px;width:' + r.width + 'px;height:' + r.height + 'px';
       box.setAttribute('role', 'button');
-      // Tag the first block of each run of the same style, not every one.
-      if (!boxes.length || boxes[boxes.length - 1].g !== g) {
-        var tag = document.createElement('span');
-        tag.className = 'nj-tag';
-        box.appendChild(tag);
-      }
       // VoiceOver activates the box itself (the shield is hidden from it).
       box.addEventListener('click', function (e) { e.stopPropagation(); toggle(g); });
       layer.appendChild(box);
@@ -111,8 +101,6 @@
         b.box.classList.toggle('on', on);
         b.box.setAttribute('aria-pressed', on);
         b.box.setAttribute('aria-label', kind + (on ? ', in your filter. ' : ', not in your filter. ') + b.text);
-        var tag = b.box.querySelector('.nj-tag');
-        if (tag) tag.textContent = on ? 'In filter · ' + kind : kind;
       });
     }
 

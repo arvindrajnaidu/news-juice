@@ -288,7 +288,7 @@
       return '<button class="nj-card role-' + roleOf(g, sizes.base, sizes.headSize) + (on ? ' on' : '') + '" data-g="' + esc(g.id) +
         '" data-kind="' + esc(kind) + '" aria-pressed="' + on + '" style="' + esc(vars) + '">' +
         '<span class="nj-sample">' + esc(g.sample) + '</span>' +
-        '<span class="nj-badge">' + (on ? 'In filter · ' : '') + esc(kind) + ' · ' + g.count + '</span></button>';
+        '<span class="nj-badge">' + esc(kind) + ' · ' + g.count + '</span></button>';
     }).join('');
   }
 
@@ -433,7 +433,7 @@
       var on = i < 0;
       card.classList.toggle('on', on);
       card.setAttribute('aria-pressed', on);
-      card.querySelector('.nj-badge').textContent = (on ? 'In filter · ' : '') + card.getAttribute('data-kind') + ' · ' + groups[id].count;
+      card.querySelector('.nj-badge').textContent = card.getAttribute('data-kind') + ' · ' + groups[id].count;
       updateButton();
       report();
     });
