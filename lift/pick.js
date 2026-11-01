@@ -50,6 +50,32 @@
     return hidden;
   }
 
+  // Ads in the page itself (full-screen in-article ads, ad slots, third-party frames)
+  // push the text out of reach; they're collapsed while picking. Never one that holds
+  // any of the page's text.
+  var AD = /(^|[\s_-])(ad|ads|adv|advert\w*|ad-?slot|ad-?unit|ad-?container|sponsor\w*|dfp|gpt-ad|taboola|outbrain|promoted)([\s_-]|$)/i;
+  function collapseAds(collapsed, texts) {
+    var holdsText = function (el) { return texts.some(function (t) { return el.contains(t); }); };
+    var collapse = function (el) {
+      if (collapsed.some(function (c) { return c[0] === el; }) || holdsText(el)) return;
+      collapsed.push([el, el.style.getPropertyValue('display'), el.style.getPropertyPriority('display')]);
+      el.style.setProperty('display', 'none', 'important');
+    };
+    document.querySelectorAll('iframe, [id], [class]').forEach(function (el) {
+      if (el.id && el.id.indexOf('nj-pick') === 0) return;
+      var name = (el.id || '') + ' ' + (typeof el.className === 'string' ? el.className : '');
+      if (el.tagName === 'IFRAME' || AD.test(name)) collapse(el);
+    });
+    // Video players (ad players most of all): the largest wrapper around each video
+    // that holds none of the page's text.
+    document.querySelectorAll('video').forEach(function (v) {
+      var box = v;
+      while (box.parentElement && box.parentElement !== document.body && !holdsText(box.parentElement)) box = box.parentElement;
+      collapse(box);
+    });
+    return collapsed;
+  }
+
   function start(opts) {
     stop();
     var els = (window.NewsJuice && NewsJuice._els) || [];
@@ -67,6 +93,7 @@
     shield.id = 'nj-pick-shield';
     shield.setAttribute('aria-hidden', 'true');
     var hidden = hideFixed([]);
+    var collapsed = collapseAds([], els);
     document.documentElement.classList.add('nj-picking');
     document.documentElement.append(style, layer, shield);
 
@@ -98,7 +125,7 @@
       });
     }
     place();
-    var sweep = setInterval(function () { hideFixed(hidden); place(); }, 500);
+    var sweep = setInterval(function () { hideFixed(hidden); collapseAds(collapsed, els); place(); }, 500);
     addEventListener('resize', place);
 
     var spots = {};
@@ -141,7 +168,7 @@
     });
 
     paint();
-    state = { style: style, layer: layer, shield: shield, hidden: hidden, sweep: sweep, place: place };
+    state = { style: style, layer: layer, shield: shield, hidden: hidden, collapsed: collapsed, sweep: sweep, place: place };
     return true;
   }
 
@@ -153,6 +180,10 @@
     state.hidden.forEach(function (h) {
       if (h[1]) h[0].style.setProperty('visibility', h[1], h[2]);
       else h[0].style.removeProperty('visibility');
+    });
+    state.collapsed.forEach(function (c) {
+      if (c[1]) c[0].style.setProperty('display', c[1], c[2]);
+      else c[0].style.removeProperty('display');
     });
     document.documentElement.classList.remove('nj-picking');
     state = null;
