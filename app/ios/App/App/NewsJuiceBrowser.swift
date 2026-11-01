@@ -130,6 +130,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     private var pickGroups = 0
     private let pickBar = PickBar()
     private var bottomBarHeight: NSLayoutConstraint!
+    /// Drives the slide back to Home while the edge swipe is under way.
+    private var homeSwipe: UIPercentDrivenInteractiveTransition?
     /// Where the reader's filter came from: "own", "suggested" or "none".
     private var filterSource = "none"
 
@@ -670,9 +672,55 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         webView.load(URLRequest(url: url))
     }
 
+    /// Swiping in from the left edge of the reader. Back to the original page follows
+    /// the finger (the reader slides off to the right as you drag); back to a previous
+    /// filtered article just goes back once the swipe ends.
     @objc private func readerEdgeSwipe(_ gesture: UIScreenEdgePanGestureRecognizer) {
-        guard gesture.state == .recognized else { return }
-        goBack()
+        let width = view.bounds.width
+        let interactive = mode == .read && readerTrail == 0 && !UIAccessibility.isReduceMotionEnabled
+        guard interactive else {
+            if gesture.state == .ended { goBack() }
+            return
+        }
+        let dx = max(0, gesture.translation(in: view).x)
+        let progress = min(1, dx / width)
+        switch gesture.state {
+        case .began:
+            webView.isHidden = false
+            webView.transform = CGAffineTransform(translationX: -width * 0.3, y: 0)
+        case .changed:
+            readerView.transform = CGAffineTransform(translationX: dx, y: 0)
+            readerBar.transform = CGAffineTransform(translationX: dx, y: 0)
+            webView.transform = CGAffineTransform(translationX: -width * 0.3 * (1 - progress), y: 0)
+            bottomBar.transform = webView.transform
+            bottomBar.alpha = progress
+        case .ended, .cancelled:
+            let finish = gesture.state == .ended && (progress > 1 / 3 || gesture.velocity(in: view).x > 600)
+            UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut]) {
+                if finish {
+                    self.readerView.transform = CGAffineTransform(translationX: width, y: 0)
+                    self.readerBar.transform = self.readerView.transform
+                    self.webView.transform = .identity
+                    self.bottomBar.transform = .identity
+                    self.bottomBar.alpha = 1
+                } else {
+                    self.readerView.transform = .identity
+                    self.readerBar.transform = .identity
+                    self.webView.transform = CGAffineTransform(translationX: -width * 0.3, y: 0)
+                    self.bottomBar.transform = self.webView.transform
+                    self.bottomBar.alpha = 0
+                }
+            } completion: { _ in
+                self.readerBar.transform = .identity
+                if finish {
+                    self.toPage(animated: false)
+                } else {
+                    self.webView.isHidden = true
+                }
+            }
+        default:
+            break
+        }
     }
 
     /// Back. In the filtered view: the previous filtered article if a link was followed
@@ -706,9 +754,30 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
 
     /// Swiping in from the left edge of the page with no history left goes Home (the
     /// web view's own swipe handles going back while there's history).
+    /// The page slides off to the right, back to Home, following the finger.
     @objc private func pageEdgeSwipe(_ gesture: UIScreenEdgePanGestureRecognizer) {
-        guard gesture.state == .recognized, mode == .page, !webView.canGoBack else { return }
-        goHome()
+        let progress = min(1, max(0, gesture.translation(in: view).x / view.bounds.width))
+        switch gesture.state {
+        case .began:
+            guard mode == .page, !webView.canGoBack else { return }
+            homeSwipe = UIPercentDrivenInteractiveTransition()
+            SideSlide.shared.interaction = homeSwipe
+            stopListening()
+            dismiss(animated: true)
+        case .changed:
+            homeSwipe?.update(progress)
+        case .ended, .cancelled:
+            guard let swipe = homeSwipe else { return }
+            if gesture.state == .ended && (progress > 1 / 3 || gesture.velocity(in: view).x > 600) {
+                swipe.finish()
+            } else {
+                swipe.cancel()
+            }
+            homeSwipe = nil
+            SideSlide.shared.interaction = nil
+        default:
+            break
+        }
     }
 
     /// Tells the start screen which site was opened (its address after any redirect, and
@@ -1895,6 +1964,13 @@ enum CoachCard {
 final class SideSlide: NSObject, UIViewControllerTransitioningDelegate, UIViewControllerAnimatedTransitioning {
     static let shared = SideSlide()
     private var presenting = true
+    /// Set while an edge swipe drives the dismissal.
+    var interaction: UIPercentDrivenInteractiveTransition?
+
+    func interactionControllerForDismissal(using animator: UIViewControllerAnimatedTransitioning)
+        -> UIViewControllerInteractiveTransitioning? {
+        interaction
+    }
 
     func animationController(forPresented presented: UIViewController, presenting: UIViewController,
                              source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
@@ -1929,7 +2005,8 @@ final class SideSlide: NSObject, UIViewControllerTransitioningDelegate, UIViewCo
             container.insertSubview(to, belowSubview: from)
             to.transform = still ? .identity : CGAffineTransform(translationX: -width * 0.3, y: 0)
         }
-        UIView.animate(withDuration: transitionDuration(using: context), delay: 0, options: [.curveEaseOut]) {
+        let curve: UIView.AnimationOptions = context.isInteractive ? .curveLinear : .curveEaseOut
+        UIView.animate(withDuration: transitionDuration(using: context), delay: 0, options: [curve]) {
             if self.presenting {
                 to.transform = .identity
                 to.alpha = 1
@@ -1942,7 +2019,9 @@ final class SideSlide: NSObject, UIViewControllerTransitioningDelegate, UIViewCo
             from.transform = .identity
             from.alpha = 1
             to.transform = .identity
-            context.completeTransition(!context.transitionWasCancelled)
+            let cancelled = context.transitionWasCancelled
+            if cancelled && !self.presenting { to.removeFromSuperview() }
+            context.completeTransition(!cancelled)
         }
     }
 }
