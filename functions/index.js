@@ -28,12 +28,15 @@ const PROVIDERS = {
     voice: 'Kore',
     // Voices a request may ask for instead (for comparing them).
     voices: ['Kore', 'Aoede', 'Leda', 'Zephyr', 'Charon', 'Puck', 'Fenrir', 'Orus'],
+    // Gemini reads long directions aloud, so it gets one short line.
+    direct: (head) => `Read this as a calm, authoritative TV news anchor${head ? ' announcing a headline' : ''}.`,
     speak: geminiSpeak,
   },
   openai: {
     model: 'gpt-4o-mini-tts',
     voice: 'coral',
     voices: ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse'],
+    direct: (head, story, site) => INSTRUCTIONS + context(story, site) + (head ? HEADLINE : ''),
     speak: openaiSpeak,
   },
 };
@@ -87,7 +90,7 @@ exports.speak = onRequest(
     const provider = PROVIDERS[PROVIDER];
     const chosen = provider.voices.includes(voice) ? voice : provider.voice;
     const language = LANGUAGES[lang] || 'en-US';
-    const instructions = INSTRUCTIONS + context(story, site) + (head ? HEADLINE : '');
+    const instructions = provider.direct(head, story, site);
     const key = crypto.createHash('sha256')
       .update(JSON.stringify([CACHE_VERSION, PROVIDER, provider.model, chosen, language, instructions, spoken]))
       .digest('hex');

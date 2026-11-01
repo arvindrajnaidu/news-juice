@@ -1411,7 +1411,7 @@ final class PlayerBar: UIView {
 /// Keyed by a SHA-256 of what shapes the audio; trimmed oldest-first to 100 MB.
 enum ClipCache {
     /// Bump when the server's voice or direction changes, so old readings aren't reused.
-    static let version = "gemini-1"
+    static let version = "gemini-2"
     private static let limit = 100 * 1024 * 1024
     private static let folder: URL = {
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
