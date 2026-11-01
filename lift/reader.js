@@ -513,13 +513,33 @@
   window.NewsJuice.pickPrep = function (r, suggested) {
     var kinds = {};
     r.groups.forEach(function (g) { kinds[g.id] = kindOf(g, r); });
-    var guess = matchRecipe(r, suggested);
-    if (!guess) {
-      guess = defaultKeep(r);
-      var head = r.groups.filter(function (g) { return kinds[g.id] === 'Headline'; })[0];
-      if (head && guess.indexOf(head.id) < 0) guess = guess.concat(head.id);
+    return { kinds: kinds, keep: matchRecipe(r, suggested) || firstGuess(r, kinds) };
+  };
+
+  // A starting point for a site with no filter. An article: its headline and body text.
+  // A front page: its headline lists (the biggest, plus a bigger-type lead list).
+  // Never captions, credits, bylines, labels or menus.
+  function firstGuess(r, kinds) {
+    var of = function (kind) { return r.groups.filter(function (g) { return kinds[g.id] === kind; }); };
+    var ids = function (gs) { return gs.map(function (g) { return g.id; }); };
+    var body = of('Article text')[0];
+    // Some home pages call themselves articles; an article also has a path and real
+    // paragraphs of text.
+    var path = '/';
+    try { path = new URL(r.url).pathname; } catch (e) { /* no url */ }
+    if (r.article && path.length > 1 && body && body.chars >= 600 && body.chars / body.count >= 60) {
+      return ids([of('Headline')[0], body].filter(Boolean));
+    } else {
+      var lists = r.groups.filter(function (g) {
+        return g.link && kinds[g.id] !== 'Menu links' && kinds[g.id] !== 'Video titles' && g.chars / g.count >= 30;
+      });
+      if (lists.length) {
+        var main = lists[0]; // groups come biggest-first
+        var lead = lists.filter(function (g) { return g !== main && g.size > main.size; })[0];
+        return ids([lead, main].filter(Boolean));
+      }
     }
-    return { kinds: kinds, keep: guess };
+    return defaultKeep(r);
   };
   // The picks for this page (for editing them on the page).
   window.NewsJuice.currentKeep = function () { return current ? current.keep() : null; };
