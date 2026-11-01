@@ -526,7 +526,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             self.bottomBarHeight.constant = -PickBar.height
             UIView.animate(withDuration: 0.25) { self.view.layoutIfNeeded() }
             self.updateBar(lifted: self.pickKeep.count, kinds: self.pickGroups)
-            if coach { CoachCard.showOnce(in: self.view, above: self.bottomBar) }
+            if coach { CoachCard.showOnce(in: self.view) }
         }
     }
 
@@ -1665,10 +1665,21 @@ enum CoachCard {
     private static let seenKey = "NJCoachSeen"
     private static let tagValue = 7_210
 
-    static func showOnce(in view: UIView, above bar: UIView) {
+    static func showOnce(in view: UIView) {
         guard !UserDefaults.standard.bool(forKey: seenKey), view.viewWithTag(tagValue) == nil else { return }
+        // A dimmed backdrop over everything, so the card reads as the app's, not the site's.
+        let backdrop = UIView()
+        backdrop.tag = tagValue
+        backdrop.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+        backdrop.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(backdrop)
+        NSLayoutConstraint.activate([
+            backdrop.topAnchor.constraint(equalTo: view.topAnchor),
+            backdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            backdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            backdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
         let card = UIView()
-        card.tag = tagValue
         card.backgroundColor = UIColor { $0.userInterfaceStyle == .dark
             ? UIColor(red: 0.17, green: 0.16, blue: 0.14, alpha: 1) : UIColor(red: 0.985, green: 0.975, blue: 0.955, alpha: 1) }
         card.layer.cornerRadius = 18
@@ -1678,8 +1689,12 @@ enum CoachCard {
         card.layer.shadowOffset = CGSize(width: 0, height: 8)
         let title = UILabel()
         title.text = "Tap the text you want to read"
-        title.font = UIFont(name: "Georgia-Bold", size: 20) ?? .boldSystemFont(ofSize: 20)
+        title.font = .systemFont(ofSize: 20, weight: .bold)
         title.numberOfLines = 0
+        let icon = UIImageView(image: UIImage(systemName: "magnifyingglass",
+                                              withConfiguration: UIImage.SymbolConfiguration(pointSize: 26, weight: .semibold)))
+        icon.tintColor = UIColor(red: 0.91, green: 0.64, blue: 0.09, alpha: 1)
+        icon.contentMode = .left
         let steps = ["Tap any text on the page.",
                      "Everything in the same style lights up and joins your filter.",
                      "Tap Start reading. We remember it for this site."]
@@ -1702,29 +1717,42 @@ enum CoachCard {
             UserDefaults.standard.set(true, forKey: seenKey)
             dismiss(in: view)
         }, for: .primaryActionTriggered)
-        let stack = UIStackView(arrangedSubviews: [title, list, ok])
+        let stack = UIStackView(arrangedSubviews: [icon, title, list, ok])
         stack.axis = .vertical
         stack.spacing = 14
         stack.setCustomSpacing(18, after: list)
+        stack.setCustomSpacing(10, after: icon)
+        // Tapping outside the card dismisses it too.
+        backdrop.addGestureRecognizer(UITapGestureRecognizer(target: CoachCard.Dismisser.shared, action: #selector(Dismisser.tapped(_:))))
         stack.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(stack)
         card.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(card)
+        backdrop.addSubview(card)
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
             stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
             stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -16),
             ok.heightAnchor.constraint(equalToConstant: 46),
-            card.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            card.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            card.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -12),
+            card.leadingAnchor.constraint(equalTo: backdrop.leadingAnchor, constant: 24),
+            card.trailingAnchor.constraint(equalTo: backdrop.trailingAnchor, constant: -24),
+            card.centerYAnchor.constraint(equalTo: backdrop.centerYAnchor),
         ])
-        card.alpha = 0
-        card.transform = CGAffineTransform(translationX: 0, y: 20)
+        backdrop.alpha = 0
+        card.transform = CGAffineTransform(scaleX: 0.94, y: 0.94)
         UIView.animate(withDuration: 0.35, delay: 0.2, usingSpringWithDamping: 0.85, initialSpringVelocity: 0, options: []) {
-            card.alpha = 1
+            backdrop.alpha = 1
             card.transform = .identity
+        }
+    }
+
+    final class Dismisser: NSObject {
+        static let shared = Dismisser()
+        @objc func tapped(_ gesture: UITapGestureRecognizer) {
+            guard let backdrop = gesture.view, let card = backdrop.subviews.first,
+                  !card.frame.contains(gesture.location(in: backdrop)), let host = backdrop.superview else { return }
+            UserDefaults.standard.set(true, forKey: seenKey)
+            dismiss(in: host)
         }
     }
 

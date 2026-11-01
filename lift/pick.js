@@ -20,6 +20,10 @@
     // The whole layer multiplies with the page, so washes tint the text without hiding it.
     '#nj-pick{position:absolute;left:0;top:0;width:0;height:0;z-index:2147483646;pointer-events:none;',
     '  mix-blend-mode:multiply}',
+    // Under the boxes, text outside the filter is washed out, so the picks stand out.
+    '#nj-pick-wash{position:absolute;left:0;top:0;width:0;height:0;z-index:2147483645;pointer-events:none}',
+    '.nj-wash{position:absolute;background:rgba(246,243,236,.6);border-radius:3px;transition:opacity .25s}',
+    '.nj-wash.on{opacity:0}',
     '#nj-pick-shield{position:fixed;inset:0;z-index:2147483647;background:transparent}',
     '.nj-box{position:absolute;box-sizing:border-box;border-radius:3px;outline:1px dashed rgba(107,100,88,.45);',
     '  outline-offset:2px;transition:outline-color .25s}',
@@ -87,6 +91,8 @@
     var style = document.createElement('style');
     style.id = 'nj-pick-style';
     style.textContent = CSS;
+    var wash = document.createElement('div');
+    wash.id = 'nj-pick-wash';
     var layer = document.createElement('div');
     layer.id = 'nj-pick';
     var shield = document.createElement('div');
@@ -95,7 +101,7 @@
     var hidden = hideFixed([]);
     var collapsed = collapseAds([], els);
     document.documentElement.classList.add('nj-picking');
-    document.documentElement.append(style, layer, shield);
+    document.documentElement.append(style, wash, layer, shield);
 
     // One box per block, in document coordinates, so it scrolls with the page.
     var boxes = [];
@@ -108,7 +114,11 @@
       // VoiceOver activates the box itself (the shield is hidden from it).
       box.addEventListener('click', function (e) { e.stopPropagation(); toggle(g); });
       layer.appendChild(box);
-      boxes.push({ g: g, el: el, box: box, top: 0, left: 0, w: 0, h: 0, text: (el.innerText || '').trim().slice(0, 80) });
+      var fade = document.createElement('div');
+      fade.className = 'nj-wash';
+      wash.appendChild(fade);
+      boxes.push({ g: g, el: el, box: box, fade: fade, top: 0, left: 0, w: 0, h: 0,
+        text: (el.innerText || '').trim().slice(0, 80) });
     });
 
     // Pages keep moving after they load (images and ads arrive, fonts swap), so the
@@ -119,9 +129,11 @@
         var r = b.el.isConnected ? b.el.getBoundingClientRect() : { width: 0, height: 0, left: 0, top: 0 };
         var shown = r.width >= 2 && r.height >= 2;
         b.left = r.left + sx; b.top = r.top + sy; b.w = shown ? r.width : 0; b.h = shown ? r.height : 0;
-        b.box.style.cssText = shown
+        var css = shown
           ? 'left:' + b.left + 'px;top:' + b.top + 'px;width:' + b.w + 'px;height:' + b.h + 'px'
           : 'display:none';
+        b.box.style.cssText = css;
+        b.fade.style.cssText = css;
       });
     }
     place();
@@ -136,6 +148,7 @@
         var on = keep.indexOf(b.g) >= 0;
         var kind = kinds[b.g] || 'Text';
         b.box.classList.toggle('on', on);
+        b.fade.classList.toggle('on', on);
         b.box.setAttribute('aria-pressed', on);
         b.box.setAttribute('aria-label', kind + (on ? ', in your filter. ' : ', not in your filter. ') + b.text);
       });
@@ -168,7 +181,7 @@
     });
 
     paint();
-    state = { style: style, layer: layer, shield: shield, hidden: hidden, collapsed: collapsed, sweep: sweep, place: place };
+    state = { style: style, wash: wash, layer: layer, shield: shield, hidden: hidden, collapsed: collapsed, sweep: sweep, place: place };
     return true;
   }
 
@@ -176,7 +189,7 @@
     if (!state) return;
     clearInterval(state.sweep);
     removeEventListener('resize', state.place);
-    [state.style, state.layer, state.shield].forEach(function (n) { n.remove(); });
+    [state.style, state.wash, state.layer, state.shield].forEach(function (n) { n.remove(); });
     state.hidden.forEach(function (h) {
       if (h[1]) h[0].style.setProperty('visibility', h[1], h[2]);
       else h[0].style.removeProperty('visibility');
