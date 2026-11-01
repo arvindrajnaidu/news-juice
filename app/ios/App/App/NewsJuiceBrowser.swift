@@ -93,6 +93,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     private let changeButton = UIButton(type: .system)
     private let shareButton = UIButton(type: .system)
     private let listenButton = UIButton(type: .system)
+    private let textButton = UIButton(type: .system)
     /// Reads the filtered page aloud; its player sits at the bottom while it's on.
     private let narrator = Narrator()
     private let player = PlayerBar()
@@ -297,6 +298,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             self.updateBar(lifted: self.lastCounts.lifted, kinds: self.lastCounts.kinds)
         }
         updateBar(lifted: 0, kinds: 0)
+        NotificationCenter.default.addObserver(forName: UIContentSizeCategory.didChangeNotification, object: nil,
+                                               queue: .main) { [weak self] _ in self?.applyTextStyle() }
         webView.load(URLRequest(url: startURL))
     }
 
@@ -344,7 +347,12 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         iconButton(changeButton, "magnifyingglass", "Edit filter") { [weak self] in self?.editOnPage() }
         iconButton(shareButton, "square.and.arrow.up", "Share filter") { [weak self] in self?.shareFilter() }
         iconButton(listenButton, "headphones", "Listen") { [weak self] in self?.listen() }
-        let right = UIStackView(arrangedSubviews: [listenButton, shareButton, changeButton])
+        iconButton(textButton, "textformat.size", "Text size") {}
+        textButton.showsMenuAsPrimaryAction = true
+        textButton.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] done in
+            done(self?.textMenuItems() ?? [])
+        }])
+        let right = UIStackView(arrangedSubviews: [listenButton, shareButton, textButton, changeButton])
         right.spacing = 0
 
         for v in [backButton, titles, right, rule] as [UIView] {
@@ -398,6 +406,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         changeButton.isHidden = mode != .read
         shareButton.isHidden = mode == .page || mode == .select
         listenButton.isHidden = mode != .read || narrator.isOn
+        textButton.isHidden = mode != .read
         switch mode {
         case .page: subtitleLabel.text = "Original page"
         case .pick, .select: subtitleLabel.text = "\(lifted) of \(kinds) styles in filter"
@@ -460,6 +469,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
                 return
             }
             if let url = self.webView.url?.absoluteString { self.liftedPages.insert(url) }
+            self.applyTextStyle()
             self.revealReader()
         }
     }
@@ -696,6 +706,50 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             sheet.popoverPresentationController?.sourceView = self.shareButton
             self.present(sheet, animated: true)
         }
+    }
+
+    // MARK: Text size
+
+    /// Steps of the reader's own size control, on top of the iPhone's text size.
+    private static let textScales: [CGFloat] = [0.85, 1, 1.15, 1.3, 1.5]
+
+    private var textScale: CGFloat {
+        get { CGFloat(UserDefaults.standard.object(forKey: "NJTextScale") as? Double ?? 1) }
+        set { UserDefaults.standard.set(Double(newValue), forKey: "NJTextScale"); applyTextStyle() }
+    }
+
+    private var textSans: Bool {
+        get { UserDefaults.standard.bool(forKey: "NJTextSans") }
+        set { UserDefaults.standard.set(newValue, forKey: "NJTextSans"); applyTextStyle() }
+    }
+
+    /// The reader's type scale: the iPhone's text size (Dynamic Type, relative to the
+    /// standard 17pt body, capped so pages still fit) times the reader's own setting.
+    private func applyTextStyle() {
+        let system = min(UIFontMetrics(forTextStyle: .body).scaledValue(for: 17) / 17, 1.8)
+        let scale = system * textScale
+        readerView?.evaluateJavaScript(
+            "window.NewsJuice && NewsJuice.setTextStyle && NewsJuice.setTextStyle({ scale: \(scale), sans: \(textSans) })")
+    }
+
+    private func textMenuItems() -> [UIMenuElement] {
+        let scales = Self.textScales
+        let i = scales.firstIndex(of: textScale) ?? 1
+        let larger = UIAction(title: "Larger", image: UIImage(systemName: "textformat.size.larger"),
+                              attributes: i + 1 < scales.count ? [] : .disabled) { [weak self] _ in
+            self?.textScale = scales[min(i + 1, scales.count - 1)]
+        }
+        let smaller = UIAction(title: "Smaller", image: UIImage(systemName: "textformat.size.smaller"),
+                               attributes: i > 0 ? [] : .disabled) { [weak self] _ in
+            self?.textScale = scales[max(i - 1, 0)]
+        }
+        let reset = UIAction(title: "Default size", attributes: textScale == 1 ? .disabled : []) { [weak self] _ in
+            self?.textScale = 1
+        }
+        let serif = UIAction(title: "Serif", state: textSans ? .off : .on) { [weak self] _ in self?.textSans = false }
+        let sans = UIAction(title: "Sans serif", state: textSans ? .on : .off) { [weak self] _ in self?.textSans = true }
+        return [UIMenu(options: .displayInline, children: [larger, smaller, reset]),
+                UIMenu(options: .displayInline, children: [serif, sans])]
     }
 
     /// Reads the filtered page aloud, from the top.

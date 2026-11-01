@@ -70,14 +70,18 @@
     '@keyframes nj-in{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}',
     '.nj-enter .nj-card{animation:nj-in .45s ' + SPRING + ' backwards;animation-delay:var(--e,0ms)}',
     // The article, in page order.
-    '.nj-article{max-width:38rem;margin:0 auto;padding:22px 24px 80px;font:19px/1.6 Georgia,"Iowan Old Style",serif;',
+    // Sizes scale with --nj-scale: the iPhone's text size times the reader's Aa setting.
+    '.nj-article{max-width:38rem;margin:0 auto;padding:22px 24px 80px;',
+    '  font:calc(19px * var(--nj-scale,1))/1.6 Georgia,"Iowan Old Style",serif;',
     '  overflow-wrap:break-word;transition:opacity .25s ease}',
     '.nj-article.hidden{display:none}',
     '.nj-article.fade{opacity:0}',
-    '.nj-article h1{font-size:28px;line-height:1.2;margin:0 0 .7em}',
-    '.nj-article h2{font-size:21px;line-height:1.3;margin:1.3em 0 .4em}',
+    // Headlines grow more slowly than body text, so big text sizes don't swamp the screen.
+    '.nj-article h1{font-size:calc(28px * min(var(--nj-scale,1), 1.35));line-height:1.2;margin:0 0 .7em}',
+    '.nj-article h2{font-size:calc(21px * min(var(--nj-scale,1), 1.6));line-height:1.3;margin:1.3em 0 .4em}',
     '.nj-article p,.nj-article li{margin:0 0 1em}',
-    '.nj-article .small{font:14px/1.45 -apple-system,system-ui,sans-serif;color:#7a7368}',
+    '.nj-article .small{font:calc(14px * var(--nj-scale,1))/1.45 -apple-system,system-ui,sans-serif;color:#7a7368}',
+    '.nj-article.sans,.nj-article.sans h1,.nj-article.sans h2{font-family:-apple-system,system-ui,sans-serif}',
     '.nj-article a{color:inherit;text-decoration:underline;text-decoration-color:#c9c2b6;text-underline-offset:.18em}',
     '.nj-article .nj-speaking{background:rgba(245,200,60,.3);box-shadow:0 0 0 8px rgba(245,200,60,.3);border-radius:3px}',
     '.listening .nj-article{padding-bottom:170px}',
@@ -300,6 +304,17 @@
       '</style><div class="nj-sheet read"><div class="nj-article">' + articleHTML(r, keep) + '</div></div>';
   }
 
+  // The reading view's text size and face, set by the app (applies to later articles too).
+  var textStyle = { scale: 1, sans: false };
+  function applyTextStyle() {
+    var host = document.getElementById('news-juice-reader');
+    if (!host || !host.shadowRoot) return;
+    var sheet = host.shadowRoot.querySelector('.nj-sheet');
+    var article = host.shadowRoot.querySelector('.nj-article');
+    if (sheet) sheet.style.setProperty('--nj-scale', textStyle.scale);
+    if (article) article.classList.toggle('sans', !!textStyle.sans);
+  }
+
   function showReader(r, opts) {
     opts = opts || {};
     var old = document.getElementById('news-juice-reader');
@@ -339,8 +354,10 @@
     document.documentElement.appendChild(host);
 
     var sheet = root.querySelector('.nj-sheet');
+    sheet.style.setProperty('--nj-scale', textStyle.scale);
     var list = root.querySelector('.nj-list');
     var article = root.querySelector('.nj-article');
+    article.classList.toggle('sans', !!textStyle.sans);
     var readBtn = root.querySelector('.nj-readbtn');
     var resetBtn = root.querySelector('.nj-reset');
     var busy = false;
@@ -545,6 +562,10 @@
   window.NewsJuice.currentKeep = function () { return current ? current.keep() : null; };
   window.NewsJuice.renderHTML = renderHTML;
   window.NewsJuice.currentRecipe = function () { return current ? current.recipe() : null; };
+  window.NewsJuice.setTextStyle = function (s) {
+    textStyle = { scale: +s.scale || 1, sans: !!s.sans };
+    applyTextStyle();
+  };
   window.NewsJuice.speechParts = function () { return current ? current.speech() : null; };
   // i: the part being read (from speechParts), or null when listening stops.
   window.NewsJuice.speaking = function (i) { if (current) current.speaking(i); };
