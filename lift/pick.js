@@ -30,9 +30,9 @@
     // Text in the filter gets an amber wash.
     '.nj-box::before{content:"";position:absolute;inset:-2px;border-radius:3px;background:transparent;',
     '  transition:background .25s}',
-    '.nj-box.on::before{background:rgba(232,163,23,.2)}',
+    '.nj-box.on::before{background:rgba(245,200,60,.35)}',
     '.nj-box::after{content:"";position:absolute;left:-6px;top:-2px;bottom:-2px;width:3px;border-radius:2px;',
-    '  background:#e8a317;transform:scaleY(0);transition:transform .25s}',
+    '  background:#d9a400;transform:scaleY(0);transition:transform .25s}',
     '.nj-box.on{outline-color:transparent}.nj-box.on::after{transform:none}',
   ].join('\n');
 

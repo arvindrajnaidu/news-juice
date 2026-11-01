@@ -38,7 +38,7 @@
     </g>
   </g>
 
-  <!-- lens ring and amber handle -->
-  <line x1="652" y1="652" x2="878" y2="878" stroke="#e8a317" stroke-width="84" stroke-linecap="round"/>
+  <!-- lens ring and teal handle -->
+  <line x1="652" y1="652" x2="878" y2="878" stroke="#1f6f6b" stroke-width="84" stroke-linecap="round"/>
   <circle cx="452" cy="452" r="262" fill="none" stroke="#1d1b18" stroke-width="44"/>
 </svg>

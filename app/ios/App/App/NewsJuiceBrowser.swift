@@ -129,7 +129,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     private static let bar = UIColor { $0.userInterfaceStyle == .dark
         ? UIColor(red: 0.13, green: 0.125, blue: 0.11, alpha: 1)
         : UIColor(red: 0.953, green: 0.937, blue: 0.902, alpha: 1) }
-    private static let accent = UIColor(red: 0.91, green: 0.64, blue: 0.09, alpha: 1)
+    /// Deep teal for the main actions (white on it); highlighter yellow only marks picked text.
+    private static let accent = UIColor(red: 0.122, green: 0.435, blue: 0.42, alpha: 1)
     /// Warm grey for the small icon controls (back, globe, sliders, house).
     private static let iconTint = UIColor { $0.userInterfaceStyle == .dark
         ? UIColor(red: 0.70, green: 0.67, blue: 0.62, alpha: 1)
@@ -370,7 +371,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         return bar
     }
 
-    /// The full-width amber Filter button in the bar under the page.
+    /// The full-width Filter button in the bar under the page.
     private func makeLiftButton() {
         var c = UIButton.Configuration.filled()
         c.title = "Filter"
@@ -378,7 +379,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
                           withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .bold))
         c.imagePadding = 8
         c.baseBackgroundColor = Self.accent
-        c.baseForegroundColor = Self.ink
+        c.baseForegroundColor = .white
         c.background.cornerRadius = 14
         c.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
             var a = $0; a.font = .systemFont(ofSize: 17, weight: .semibold); return a
@@ -1644,8 +1645,8 @@ final class PickBar: UIView {
         c.titleAlignment = .leading
         if count > 0 {
             c.image = UIImage(systemName: "magnifyingglass", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .bold))
-            c.baseBackgroundColor = UIColor(red: 0.91, green: 0.64, blue: 0.09, alpha: 1)
-            c.baseForegroundColor = UIColor(red: 0.114, green: 0.106, blue: 0.094, alpha: 1)
+            c.baseBackgroundColor = UIColor(red: 0.122, green: 0.435, blue: 0.42, alpha: 1)
+            c.baseForegroundColor = .white
             c.attributedTitle = AttributedString("Start reading", attributes: AttributeContainer([.font: UIFont.systemFont(ofSize: 17, weight: .semibold)]))
             c.attributedSubtitle = AttributedString(count == 1 ? "1 style in your filter" : "\(count) styles in your filter",
                                                     attributes: AttributeContainer([.font: UIFont.systemFont(ofSize: 12, weight: .medium)]))
@@ -1693,7 +1694,7 @@ enum CoachCard {
         title.numberOfLines = 0
         let icon = UIImageView(image: UIImage(systemName: "magnifyingglass",
                                               withConfiguration: UIImage.SymbolConfiguration(pointSize: 26, weight: .semibold)))
-        icon.tintColor = UIColor(red: 0.91, green: 0.64, blue: 0.09, alpha: 1)
+        icon.tintColor = UIColor(red: 0.122, green: 0.435, blue: 0.42, alpha: 1)
         icon.contentMode = .left
         let steps = ["Tap any text on the page.",
                      "Everything in the same style lights up and joins your filter.",
@@ -1708,8 +1709,8 @@ enum CoachCard {
         list.axis = .vertical
         list.spacing = 8
         var bc = UIButton.Configuration.filled()
-        bc.baseBackgroundColor = UIColor(red: 0.91, green: 0.64, blue: 0.09, alpha: 1)
-        bc.baseForegroundColor = UIColor(red: 0.114, green: 0.106, blue: 0.094, alpha: 1)
+        bc.baseBackgroundColor = UIColor(red: 0.122, green: 0.435, blue: 0.42, alpha: 1)
+        bc.baseForegroundColor = .white
         bc.background.cornerRadius = 12
         bc.attributedTitle = AttributedString("Got it", attributes: AttributeContainer([.font: UIFont.systemFont(ofSize: 16, weight: .semibold)]))
         let ok = UIButton(configuration: bc)
