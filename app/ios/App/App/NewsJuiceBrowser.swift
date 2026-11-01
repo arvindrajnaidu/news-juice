@@ -374,7 +374,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         listenButton.isHidden = mode != .read || narrator.isOn
         switch mode {
         case .page: subtitleLabel.text = "Original page"
-        case .pick: subtitleLabel.text = "\(lifted) of \(kinds) kinds kept"
+        case .pick: subtitleLabel.text = "\(lifted) of \(kinds) styles kept"
         case .read: subtitleLabel.text = filterSource == "suggested" ? "Suggested filter" : "Filtered · saved for this site"
         }
     }

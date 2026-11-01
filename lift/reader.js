@@ -63,7 +63,9 @@
     '  border-radius:16px;background:#e8a317;color:' + INK + ';font:600 17px -apple-system,system-ui,sans-serif;display:flex;',
     '  align-items:center;justify-content:center;gap:8px;box-shadow:0 10px 24px rgba(29,27,24,.22);z-index:3;',
     '  transition:transform .4s cubic-bezier(.2,.9,.2,1),opacity .3s ease}',
-    '.nj-readbtn:disabled{opacity:.5}',
+    '.nj-readbtn:disabled{background:#e6dfd2;color:#7a7368;box-shadow:none}',
+    '.nj-readbtn .nj-label{display:flex;flex-direction:column;align-items:flex-start;line-height:1.15}',
+    '.nj-readbtn small{font-size:12px;font-weight:500;opacity:.75}',
     '.read .nj-readbtn{transform:translateY(140px);opacity:0;pointer-events:none}',
     '@keyframes nj-in{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}',
     '.nj-enter .nj-card{animation:nj-in .45s ' + SPRING + ' backwards;animation-delay:var(--e,0ms)}',
@@ -349,7 +351,9 @@
     var updateButton = function () {
       readBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" ' +
         'stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="M15.5 15.5L21 21"></path></svg>' +
-        'Read ' + keep.length + ' kept';
+        '<span class="nj-label">' + (keep.length
+          ? 'Start reading<small>' + keep.length + (keep.length === 1 ? ' style' : ' styles') + ' kept</small>'
+          : 'Pick something to keep') + '</span>';
       readBtn.disabled = !keep.length;
       resetBtn.hidden = !suggested || sameSet(keep, suggested);
     };
