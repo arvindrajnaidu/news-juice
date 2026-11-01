@@ -94,6 +94,12 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     private let shareButton = UIButton(type: .system)
     private let listenButton = UIButton(type: .system)
     private let textButton = UIButton(type: .system)
+    /// Back buttons in the bottom bars (the page's, next to Filter, and the reading
+    /// toolbar's); the top bar's back is only for picking.
+    private let pageBack = UIButton(type: .system)
+    private let readBack = UIButton(type: .system)
+    /// The reading view's toolbar: back, Listen, share, text size, edit filter.
+    private let readerBar = UIView()
     /// Reads the filtered page aloud; its player sits at the bottom while it's on.
     private let narrator = Narrator()
     private let player = PlayerBar()
@@ -214,7 +220,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         bottomBar.backgroundColor = Self.bar
         let hairline = UIView()
         hairline.backgroundColor = .separator
-        for v in [hairline, liftButton, pickBar] as [UIView] {
+        for v in [hairline, pageBack, liftButton, pickBar] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             bottomBar.addSubview(v)
         }
@@ -224,7 +230,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
 
         // The site sits on top of the reader and slides away to reveal it; the site ends
         // above the bottom bar, the reader runs to the bottom of the screen.
-        for v in [readerView!, webView!, topBar, progress, bottomBar, player] as [UIView] {
+        makeReaderBar()
+        for v in [readerView!, webView!, topBar, progress, bottomBar, readerBar, player] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
@@ -258,7 +265,11 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             hairline.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor),
             hairline.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
 
-            liftButton.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: 16),
+            pageBack.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: 8),
+            pageBack.centerYAnchor.constraint(equalTo: liftButton.centerYAnchor),
+            pageBack.widthAnchor.constraint(equalToConstant: 44),
+            pageBack.heightAnchor.constraint(equalToConstant: 44),
+            liftButton.leadingAnchor.constraint(equalTo: pageBack.trailingAnchor, constant: 8),
             liftButton.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -16),
             liftButton.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: 8),
             liftButton.heightAnchor.constraint(equalToConstant: 46),
@@ -269,8 +280,14 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
 
             player.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             player.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            player.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            player.topAnchor.constraint(equalTo: guide.bottomAnchor, constant: -80),
+            readerBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            readerBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            readerBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            readerBar.topAnchor.constraint(equalTo: guide.bottomAnchor, constant: -52),
+
+            // The Listen player sits just above the reading toolbar.
+            player.bottomAnchor.constraint(equalTo: readerBar.topAnchor),
+            player.heightAnchor.constraint(equalToConstant: 76),
         ])
         player.isHidden = true
         bottomBarHeight = bottomBar.topAnchor.constraint(equalTo: guide.bottomAnchor, constant: -62)
@@ -321,6 +338,12 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         backButton.accessibilityLabel = "Back"
         backButton.addAction(UIAction { [weak self] _ in self?.goBack() }, for: .primaryActionTriggered)
         backButton.addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: #selector(backHeld(_:))))
+        for b in [pageBack, readBack] {
+            b.configuration = back
+            b.accessibilityLabel = "Back"
+            b.addAction(UIAction { [weak self] _ in self?.goBack() }, for: .primaryActionTriggered)
+            b.addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: #selector(backHeld(_:))))
+        }
 
         titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         titleLabel.text = startURL.host
@@ -352,7 +375,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         textButton.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] done in
             done(self?.textMenuItems() ?? [])
         }])
-        let right = UIStackView(arrangedSubviews: [listenButton, shareButton, textButton, changeButton])
+        let right = UIStackView(arrangedSubviews: [])
         right.spacing = 0
 
         for v in [backButton, titles, right, rule] as [UIView] {
@@ -403,9 +426,13 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         // to go; holding it goes straight Home.
         backButton.accessibilityLabel = mode != .page ? (readerTrail > 0 ? "Previous article" : "Original page")
             : webView.canGoBack ? "Back" : "Your sites"
+        // Page and reading view have back in their bottom bars; picking keeps it on top.
+        backButton.isHidden = mode == .page || mode == .read
+        readerBar.isHidden = mode != .read
+        pageBack.isHidden = mode != .page
         changeButton.isHidden = mode != .read
         shareButton.isHidden = mode == .page || mode == .select
-        listenButton.isHidden = mode != .read || narrator.isOn
+        listenButton.isEnabled = !narrator.isOn
         textButton.isHidden = mode != .read
         switch mode {
         case .page: subtitleLabel.text = "Original page"
@@ -706,6 +733,33 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             sheet.popoverPresentationController?.sourceView = self.shareButton
             self.present(sheet, animated: true)
         }
+    }
+
+    /// The reading view's toolbar along the bottom: back, then the reading tools.
+    private func makeReaderBar() {
+        readerBar.backgroundColor = Self.bar
+        readerBar.isHidden = true
+        let rule = UIView()
+        rule.backgroundColor = .separator
+        let tools = UIStackView(arrangedSubviews: [readBack, listenButton, shareButton, textButton, changeButton])
+        tools.distribution = .equalSpacing
+        tools.alignment = .center
+        for v in [rule, tools] as [UIView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            readerBar.addSubview(v)
+        }
+        NSLayoutConstraint.activate([
+            rule.topAnchor.constraint(equalTo: readerBar.topAnchor),
+            rule.leadingAnchor.constraint(equalTo: readerBar.leadingAnchor),
+            rule.trailingAnchor.constraint(equalTo: readerBar.trailingAnchor),
+            rule.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
+            tools.topAnchor.constraint(equalTo: readerBar.topAnchor, constant: 4),
+            tools.heightAnchor.constraint(equalToConstant: 44),
+            tools.leadingAnchor.constraint(equalTo: readerBar.leadingAnchor, constant: 16),
+            tools.trailingAnchor.constraint(equalTo: readerBar.trailingAnchor, constant: -16),
+            readBack.widthAnchor.constraint(equalToConstant: 44),
+            readBack.heightAnchor.constraint(equalToConstant: 44),
+        ])
     }
 
     // MARK: Text size
