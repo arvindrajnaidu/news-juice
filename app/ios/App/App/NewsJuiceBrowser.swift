@@ -1343,11 +1343,35 @@ enum ShareLinks {
 
     /// A link that arrived before the app's UI was up (opening the app from it).
     private static var pending: URL?
+    /// A page to open, from the share sheet or Shortcuts: newslens://open?url=<page>.
+    private static var pendingPage: URL?
+
+    static func pageToOpen(_ url: URL) -> URL? {
+        guard url.scheme?.lowercased() == scheme, url.host == "open",
+              let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "url" })?.value,
+              let page = URL(string: value), ["http", "https"].contains(page.scheme?.lowercased() ?? "") else { return nil }
+        return page
+    }
+
+    private static func mainController() -> UIViewController? {
+        guard let root = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+            .flatMap(\.windows).compactMap(\.rootViewController).first(where: { $0 is MainViewController }),
+              // Home is on screen, or covered by a site that's open (then its own view is
+              // out of the window).
+              root.isViewLoaded, root.view.window != nil || root.presentedViewController != nil else { return nil }
+        return root
+    }
 
     /// Handles a share link: asks whether to use the filter, then saves it and opens the
     /// site filtered. Returns false if the URL isn't a share link.
     @discardableResult
     static func open(_ url: URL) -> Bool {
+        if let page = pageToOpen(url) {
+            pendingPage = page
+            showPending()
+            return true
+        }
         guard parse(url) != nil else {
             NSLog("NewsJuice not a share link: %@", url.absoluteString)
             return false
@@ -1358,6 +1382,14 @@ enum ShareLinks {
     }
 
     static func showPending() {
+        if let page = pendingPage, let root = mainController() {
+            pendingPage = nil
+            // Opens like a site from Home (and joins the list there); a site with a
+            // filter opens straight in the filtered view.
+            let show = { root.present(BrowserViewController(url: page), animated: true) }
+            if root.presentedViewController != nil { root.dismiss(animated: false, completion: show) } else { show() }
+            return
+        }
         guard let url = pending, let shared = parse(url),
               let root = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
                 .flatMap(\.windows).compactMap(\.rootViewController).first(where: { $0 is MainViewController }),
