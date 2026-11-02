@@ -42,10 +42,12 @@
 
   // Sticky headers, cookie banners and other fixed layers would sit over the text and
   // catch taps; they're hidden while picking and put back afterwards.
-  function hideFixed(hidden) {
+  // Each element is looked at once (seen), so later sweeps only cost the new ones.
+  function hideFixed(hidden, seen) {
     document.querySelectorAll('body *').forEach(function (el) {
+      if (seen.has(el)) return;
+      seen.add(el);
       if (el.id && el.id.indexOf('nj-pick') === 0) return;
-      if (hidden.some(function (h) { return h[0] === el; })) return;
       var pos = getComputedStyle(el).position;
       if (pos !== 'fixed' && pos !== 'sticky') return;
       hidden.push([el, el.style.getPropertyValue('visibility'), el.style.getPropertyPriority('visibility')]);
@@ -58,14 +60,17 @@
   // push the text out of reach; they're collapsed while picking. Never one that holds
   // any of the page's text.
   var AD = /(^|[\s_-])(ad|ads|adv|advert\w*|ad-?slot|ad-?unit|ad-?container|sponsor\w*|dfp|gpt-ad|taboola|outbrain|promoted)([\s_-]|$)/i;
-  function collapseAds(collapsed, texts) {
-    var holdsText = function (el) { return texts.some(function (t) { return el.contains(t); }); };
+  // holding: every element that contains some of the page's text (built once).
+  function collapseAds(collapsed, holding, seen) {
+    var holdsText = function (el) { return holding.has(el); };
     var collapse = function (el) {
       if (collapsed.some(function (c) { return c[0] === el; }) || holdsText(el)) return;
       collapsed.push([el, el.style.getPropertyValue('display'), el.style.getPropertyPriority('display')]);
       el.style.setProperty('display', 'none', 'important');
     };
     document.querySelectorAll('iframe, [id], [class]').forEach(function (el) {
+      if (seen.has(el)) return;
+      seen.add(el);
       if (el.id && el.id.indexOf('nj-pick') === 0) return;
       var name = (el.id || '') + ' ' + (typeof el.className === 'string' ? el.className : '');
       if (el.tagName === 'IFRAME' || AD.test(name)) collapse(el);
@@ -73,6 +78,8 @@
     // Video players (ad players most of all): the largest wrapper around each video
     // that holds none of the page's text.
     document.querySelectorAll('video').forEach(function (v) {
+      if (seen.has(v)) return;
+      seen.add(v);
       var box = v;
       while (box.parentElement && box.parentElement !== document.body && !holdsText(box.parentElement)) box = box.parentElement;
       collapse(box);
@@ -98,8 +105,11 @@
     var shield = document.createElement('div');
     shield.id = 'nj-pick-shield';
     shield.setAttribute('aria-hidden', 'true');
-    var hidden = hideFixed([]);
-    var collapsed = collapseAds([], els);
+    var holding = new Set();
+    els.forEach(function (el) { for (var n = el; n && !holding.has(n); n = n.parentElement) holding.add(n); });
+    var seenFixed = new WeakSet(), seenAds = new WeakSet();
+    var hidden = hideFixed([], seenFixed);
+    var collapsed = collapseAds([], holding, seenAds);
     document.documentElement.classList.add('nj-picking');
     document.documentElement.append(style, wash, layer, shield);
 
@@ -137,8 +147,20 @@
       });
     }
     place();
-    var sweep = setInterval(function () { hideFixed(hidden); collapseAds(collapsed, els); place(); }, 500);
-    addEventListener('resize', place);
+    // Boxes are re-measured when the page changes size (images, ads and fonts arriving),
+    // at most once a frame; new banners and ads are swept up every second.
+    var queued = false;
+    var replace = function () {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(function () { queued = false; place(); });
+    };
+    var resized = new ResizeObserver(replace);
+    resized.observe(document.documentElement);
+    var sweep = setInterval(function () {
+      hideFixed(hidden, seenFixed); collapseAds(collapsed, holding, seenAds); replace();
+    }, 1000);
+    addEventListener('resize', replace);
 
     var spots = {};
     boxes.forEach(function (b) { spots[b.g] = (spots[b.g] || 0) + 1; });
@@ -181,14 +203,16 @@
     });
 
     paint();
-    state = { style: style, wash: wash, layer: layer, shield: shield, hidden: hidden, collapsed: collapsed, sweep: sweep, place: place };
+    state = { style: style, wash: wash, layer: layer, shield: shield, hidden: hidden, collapsed: collapsed,
+      sweep: sweep, replace: replace, resized: resized };
     return true;
   }
 
   function stop() {
     if (!state) return;
     clearInterval(state.sweep);
-    removeEventListener('resize', state.place);
+    state.resized.disconnect();
+    removeEventListener('resize', state.replace);
     [state.style, state.wash, state.layer, state.shield].forEach(function (n) { n.remove(); });
     state.hidden.forEach(function (h) {
       if (h[1]) h[0].style.setProperty('visibility', h[1], h[2]);

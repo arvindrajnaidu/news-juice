@@ -136,6 +136,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     private var pickGroups = 0
     private let pickBar = PickBar()
     private var bottomBarHeight: NSLayoutConstraint!
+    private var textSizeObserver: NSObjectProtocol?
     /// Drives the slide back to Home while the edge swipe is under way.
     private var homeSwipe: UIPercentDrivenInteractiveTransition?
     /// Where the reader's filter came from: "own", "suggested" or "none".
@@ -163,6 +164,21 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    deinit {
+        if let textSizeObserver { NotificationCenter.default.removeObserver(textSizeObserver) }
+    }
+
+    /// Lets go of the page and reader when the browser closes: their script handlers
+    /// (held by WebKit, not by us), audio and any picking on the page.
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        guard isBeingDismissed || presentingViewController == nil else { return }
+        stopListening()
+        webView?.stopLoading()
+        webView?.configuration.userContentController.removeAllScriptMessageHandlers()
+        readerView?.configuration.userContentController.removeAllScriptMessageHandlers()
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -327,8 +343,10 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             self.updateBar(lifted: self.lastCounts.lifted, kinds: self.lastCounts.kinds)
         }
         updateBar(lifted: 0, kinds: 0)
-        NotificationCenter.default.addObserver(forName: UIContentSizeCategory.didChangeNotification, object: nil,
-                                               queue: .main) { [weak self] _ in self?.applyTextStyle() }
+        textSizeObserver = NotificationCenter.default.addObserver(
+            forName: UIContentSizeCategory.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.applyTextStyle()
+        }
         webView.load(URLRequest(url: startURL))
     }
 
@@ -525,7 +543,9 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             guard value as? Bool == true else {
                 // The reader page is still loading (only possible right after opening).
                 if attempt < 10 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.showReader(liftJSON, suggested: suggested, attempt: attempt + 1) }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                        self?.showReader(liftJSON, suggested: suggested, attempt: attempt + 1)
+                    }
                 }
                 return
             }
@@ -1812,9 +1832,14 @@ enum ClipCache {
         return data
     }
 
+    /// Disk work happens off the main thread, one write at a time.
+    private static let io = DispatchQueue(label: "news-lens.clip-cache", qos: .utility)
+
     static func put(_ key: String, _ data: Data) {
-        try? data.write(to: folder.appendingPathComponent(key + ".mp3"))
-        trim()
+        io.async {
+            try? data.write(to: folder.appendingPathComponent(key + ".mp3"))
+            trim()
+        }
     }
 
     private static func trim() {
@@ -1957,9 +1982,9 @@ enum CoachCard {
         bc.background.cornerRadius = 12
         bc.attributedTitle = AttributedString("Got it", attributes: AttributeContainer([.font: UIFont.systemFont(ofSize: 16, weight: .semibold)]))
         let ok = UIButton(configuration: bc)
-        ok.addAction(UIAction { _ in
+        ok.addAction(UIAction { [weak view] _ in
             UserDefaults.standard.set(true, forKey: seenKey)
-            dismiss(in: view)
+            if let view { dismiss(in: view) }
         }, for: .primaryActionTriggered)
         let stack = UIStackView(arrangedSubviews: [icon, title, list, ok])
         stack.axis = .vertical
