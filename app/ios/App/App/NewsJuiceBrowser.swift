@@ -466,7 +466,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         pageBack.isHidden = mode != .page
         changeButton.isHidden = mode != .read
         shareButton.isHidden = mode == .page || mode == .select
-        listenButton.isEnabled = !narrator.isOn
+        listenButton.isEnabled = Self.listenEnabled && !narrator.isOn
         textButton.isHidden = mode != .read
         viewSwitch.isHidden = mode == .select || mode == .pick
         viewSwitch.selectedSegmentIndex = mode == .read ? 1 : 0
@@ -882,8 +882,17 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         }
     }
 
+    /// Listen (reading aloud) isn't launched yet: its button keeps its place in the bar,
+    /// unseen, so the magnifier stays centred. Flip this to bring it back.
+    static let listenEnabled = false
+
     /// The reading view's toolbar along the bottom: back, then the reading tools.
     private func makeReaderBar() {
+        if !Self.listenEnabled {
+            listenButton.alpha = 0
+            listenButton.isUserInteractionEnabled = false
+            listenButton.isAccessibilityElement = false
+        }
         readerBar.backgroundColor = Self.bar
         readerBar.isHidden = true
         let rule = UIView()
@@ -956,6 +965,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
 
     /// Reads the filtered page aloud, from the top.
     private func listen() {
+        guard Self.listenEnabled else { return }
         readerView.evaluateJavaScript("window.NewsJuice && NewsJuice.speechParts()") { [weak self] value, _ in
             guard let self, let obj = value as? [String: Any],
                   let raw = obj["parts"] as? [[String: Any]], !raw.isEmpty else { return }
