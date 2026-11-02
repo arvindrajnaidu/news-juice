@@ -117,8 +117,6 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     /// Set when the next page should open straight in the reader (a link tapped in the
     /// reader, or going back to a page that was lifted): lift it once it loads.
     private var liftOnLoad = false
-    /// Pages that were showing the reader, so going back to one lifts it again.
-    private var liftedPages = Set<String>()
     /// Whether the start screen has been told which site this browser opened.
     private var siteReported = false
     /// Set while a navigation the app asked for (a link tapped in the reader) is under way.
@@ -137,9 +135,6 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     private let pickBar = PickBar()
     private var bottomBarHeight: NSLayoutConstraint!
     private var textSizeObserver: NSObjectProtocol?
-    /// Opening a site that has a filter: the reading view shows a placeholder straight
-    /// away while the page loads unseen underneath, until the first lift fills it in.
-    private var opening = false
     /// Drives the slide back to Home while the edge swipe is under way.
     private var homeSwipe: UIPercentDrivenInteractiveTransition?
     /// Where the reader's filter came from: "own", "suggested" or "none".
@@ -156,12 +151,9 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         : UIColor(red: 0.42, green: 0.39, blue: 0.345, alpha: 1) }
     private static let ink = UIColor(red: 0.114, green: 0.106, blue: 0.094, alpha: 1)
 
-    /// filter: filter the first page as soon as it loads (a shared filter was just added).
-    init(url: URL, filter: Bool = false) {
+    init(url: URL) {
         startURL = url
         super.init(nibName: nil, bundle: nil)
-        // A site with a filter (the user's or a suggested one) opens straight in the filtered view.
-        liftOnLoad = filter || url.host.map(Self.hasFilter) ?? false
         modalPresentationStyle = .fullScreen
         transitioningDelegate = SideSlide.shared
     }
@@ -350,7 +342,6 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             forName: UIContentSizeCategory.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
             self?.applyTextStyle()
         }
-        if liftOnLoad { startOpening() }
         webView.load(URLRequest(url: startURL))
     }
 
@@ -485,7 +476,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         switch mode {
         case .page: subtitleLabel.text = "Original page"
         case .pick, .select: subtitleLabel.text = "\(lifted) of \(kinds) styles in filter"
-        case .read: subtitleLabel.text = opening ? "Filtering…" : filterSource == "suggested" ? "Suggested filter" : "Saved for this site"
+        case .read: subtitleLabel.text = filterSource == "suggested" ? "Suggested filter" : "Saved for this site"
         }
     }
 
@@ -504,8 +495,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     }
 
     /// Runs lift.js on the page and looks up the site's suggested filter.
-    private func liftPage(then next: @escaping (_ json: String, _ suggested: [String]?) -> Void,
-                          failed: (() -> Void)? = nil) {
+    private func liftPage(then next: @escaping (_ json: String, _ suggested: [String]?) -> Void) {
         // lift.js lives in the isolated client world, so that's where it's called.
         let js = "JSON.stringify(window.NewsJuice ? NewsJuice.lift() : { ok: false, reason: 'lift.js not loaded' })"
         webView.evaluateJavaScript(js, in: nil, in: .defaultClient) { [weak self] result in
@@ -515,7 +505,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   obj["ok"] as? Bool == true else {
                 NSLog("NewsJuice lift failed: %@", String(describing: result))
-                if let failed { failed() } else { self.flash("Nothing to filter on this page") }
+                self.flash("Nothing to filter on this page")
                 return
             }
             let groups = obj["groups"] as? [[String: Any]] ?? []
@@ -554,7 +544,6 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
                 }
                 return
             }
-            if let url = self.webView.url?.absoluteString { self.liftedPages.insert(url) }
             self.applyTextStyle()
             self.revealReader()
         }
@@ -616,47 +605,6 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         guard animated else { show(); done(true); return }
         UIView.animate(withDuration: still ? 0.25 : 0.4, delay: 0, options: [.curveEaseOut],
                        animations: show, completion: done)
-    }
-
-    // MARK: Opening a filtered site
-
-    private func startOpening() {
-        opening = true
-        mode = .read
-        readerView.isHidden = false
-        webView.isHidden = true
-        bottomBar.alpha = 0
-        showLoading()
-        updateBar(lifted: 0, kinds: 0)
-    }
-
-    private func showLoading(attempt: Int = 0) {
-        let site = (startURL.host.map(RecipeHandler.normalize) ?? "").replacingOccurrences(of: "'", with: "")
-        readerView.evaluateJavaScript("window.NewsJuice && NewsJuice.showLoading ? NewsJuice.showLoading('\(site)') : false") { [weak self] value, _ in
-            guard let self, self.opening else { return }
-            if value as? Bool == true { self.applyTextStyle(); return }
-            // The reader page is still loading.
-            if attempt < 20 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.showLoading(attempt: attempt + 1) }
-            }
-        }
-    }
-
-    /// Lifts the page being opened. Early tries (before it has finished loading) wait
-    /// quietly if there's nothing yet; the last try falls back to the original page.
-    private func liftOpening(final: Bool) {
-        guard opening else { return }
-        liftPage(then: { [weak self] json, keep in
-            guard let self, self.opening else { return }
-            self.opening = false
-            self.liftOnLoad = false
-            self.showReader(json, suggested: keep)
-        }, failed: { [weak self] in
-            guard let self, self.opening, final else { return }
-            self.opening = false
-            self.toPage(animated: true)
-            self.flash("Couldn't filter this page")
-        })
     }
 
     // MARK: Picking on the page
@@ -1046,15 +994,12 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         titleLabel.text = webView.url?.host
         SuggestedFilters.refreshIfStale()
+        // Whether this site has a filter decides if Filtered can be tapped.
+        updateBar(lifted: lastCounts.lifted, kinds: lastCounts.kinds)
         appNavigation = false
         // A page opened from the reader stays behind the reader until it's lifted;
         // anything else shows the page.
         if !liftOnLoad && mode != .page { toPage(animated: false) }
-        // Opening a filtered site: try early, once the page has had a moment to render,
-        // rather than waiting for every ad and image to finish loading.
-        if opening {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in self?.liftOpening(final: false) }
-        }
         #if DEBUG
         debugRunDone = false
         #endif
@@ -1062,10 +1007,9 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         reportSiteOnce()
-        let backToLifted = webView.url.map { liftedPages.contains($0.absoluteString) } ?? false
-        if opening {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.liftOpening(final: true) }
-        } else if liftOnLoad || (backToLifted && siteHasRecipe) {
+        // Only a page opened from the filtered view (a link in it, or back from one) is
+        // filtered on its own; anything else opens as the original page.
+        if liftOnLoad {
             // A beat for late paragraphs to render before lifting.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.lift() }
         }
@@ -1125,7 +1069,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         // The reader is a snapshot of the page; while it's up, don't let the site load
         // something else underneath it on its own.
         if webView === self.webView, mode != .page, action.targetFrame?.isMainFrame == true,
-           !appNavigation, !opening, action.navigationType != .backForward {
+           !appNavigation, action.navigationType != .backForward {
             NSLog("NewsJuice held site navigation to %@ while reading", action.request.url?.absoluteString ?? "")
             decisionHandler(.cancel)
             return
@@ -1414,7 +1358,7 @@ enum ShareLinks {
             RecipeHandler.save(host: site, keep: keep)
             NSLog("NewsJuice shared filter for %@: %@", site, keep.joined(separator: " | "))
             guard let page = URL(string: "https://\(host)/") else { return }
-            let show = { root.present(BrowserViewController(url: page, filter: true), animated: true) }
+            let show = { root.present(BrowserViewController(url: page), animated: true) }
             if root.presentedViewController != nil { root.dismiss(animated: true, completion: show) } else { show() }
         })
         top.present(alert, animated: true)

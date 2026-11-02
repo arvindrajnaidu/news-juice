@@ -562,32 +562,6 @@
   window.NewsJuice.currentKeep = function () { return current ? current.keep() : null; };
   window.NewsJuice.renderHTML = renderHTML;
   window.NewsJuice.currentRecipe = function () { return current ? current.recipe() : null; };
-  // While a site with a filter is still loading: the reading view with a calm placeholder.
-  var LOADING_CSS = [
-    '.nj-wait{font:600 15px -apple-system,system-ui,sans-serif;color:#7a7368;margin:0 0 22px}',
-    '.nj-sk{height:15px;border-radius:8px;background:#e9e3d8;margin:0 0 13px;',
-    '  animation:nj-pulse 1.1s ease-in-out infinite alternate}',
-    '.nj-sk.head{height:26px;margin:0 0 12px}.nj-sk.gap{margin-bottom:30px}',
-    '@keyframes nj-pulse{from{opacity:.55}to{opacity:1}}',
-    '@media (prefers-reduced-motion:reduce){.nj-sk{animation:none}}',
-  ].join('\n');
-  window.NewsJuice.showLoading = function (site) {
-    var old = document.getElementById('news-juice-reader');
-    if (old) old.remove();
-    current = null;
-    var widths = [['head', 92], ['head', 70], ['', 100], ['', 96], ['', 98], ['gap', 60], ['head', 84],
-      ['', 100], ['', 94], ['gap', 72], ['', 100], ['', 97], ['', 88]];
-    var lines = widths.map(function (w) {
-      return '<div class="nj-sk ' + w[0] + '" style="width:' + w[1] + '%"></div>';
-    }).join('');
-    var host = document.createElement('div');
-    host.id = 'news-juice-reader';
-    var root = host.attachShadow({ mode: 'open' });
-    root.innerHTML = '<style>' + CSS + LOADING_CSS + '</style><div class="nj-sheet read"><div class="nj-article">' +
-      '<p class="nj-wait">Filtering ' + esc(site || '') + '…</p>' + lines + '</div></div>';
-    document.documentElement.appendChild(host);
-    return true;
-  };
   window.NewsJuice.setTextStyle = function (s) {
     textStyle = { scale: +s.scale || 1, sans: !!s.sans };
     applyTextStyle();
