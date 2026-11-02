@@ -269,14 +269,15 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             hairline.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor),
             hairline.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
 
-            pageBack.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: 8),
-            pageBack.centerYAnchor.constraint(equalTo: liftButton.centerYAnchor),
+            // Same spots as the reading toolbar: back at the left, the magnifier centred.
+            pageBack.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: 16),
+            pageBack.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: 4),
             pageBack.widthAnchor.constraint(equalToConstant: 44),
             pageBack.heightAnchor.constraint(equalToConstant: 44),
-            liftButton.leadingAnchor.constraint(equalTo: pageBack.trailingAnchor, constant: 8),
-            liftButton.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -16),
-            liftButton.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: 8),
-            liftButton.heightAnchor.constraint(equalToConstant: 46),
+            liftButton.centerXAnchor.constraint(equalTo: bottomBar.centerXAnchor),
+            liftButton.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: 4),
+            liftButton.widthAnchor.constraint(equalToConstant: 56),
+            liftButton.heightAnchor.constraint(equalToConstant: 44),
 
             pickBar.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: 16),
             pickBar.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -16),
@@ -294,7 +295,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             player.heightAnchor.constraint(equalToConstant: 76),
         ])
         player.isHidden = true
-        bottomBarHeight = bottomBar.topAnchor.constraint(equalTo: guide.bottomAnchor, constant: -62)
+        bottomBarHeight = bottomBar.topAnchor.constraint(equalTo: guide.bottomAnchor, constant: -52)
         bottomBarHeight.isActive = true
         player.onPlayPause = { [weak self] in self?.narrator.togglePause() }
         player.onPrevious = { [weak self] in self?.narrator.skip(by: -1) }
@@ -407,19 +408,21 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     }
 
     /// The full-width Filter button in the bar under the page.
-    private func makeLiftButton() {
-        var c = UIButton.Configuration.filled()
-        c.title = "Filter"
+    /// The magnifying glass: the app's main action, teal and a little larger than the
+    /// other icons, in the middle of the bottom bar (Filter on the page, Edit filter in
+    /// the reader), so it's always in the same place.
+    private static func styleMagnifier(_ button: UIButton) {
+        var c = UIButton.Configuration.plain()
         c.image = UIImage(systemName: "magnifyingglass",
-                          withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .bold))
-        c.imagePadding = 8
-        c.baseBackgroundColor = Self.accent
-        c.baseForegroundColor = .white
-        c.background.cornerRadius = 14
-        c.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
-            var a = $0; a.font = .systemFont(ofSize: 17, weight: .semibold); return a
-        }
-        liftButton.configuration = c
+                          withConfiguration: UIImage.SymbolConfiguration(pointSize: 24, weight: .bold))
+        c.contentInsets = .zero
+        c.baseForegroundColor = Self.accent
+        button.configuration = c
+    }
+
+    private func makeLiftButton() {
+        Self.styleMagnifier(liftButton)
+        liftButton.accessibilityLabel = "Filter"
         liftButton.addAction(UIAction { [weak self] _ in self?.lift() }, for: .primaryActionTriggered)
     }
 
@@ -605,7 +608,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         pickBar.isHidden = true
         liftButton.isHidden = false
         CoachCard.dismiss(in: view)
-        bottomBarHeight.constant = -62
+        bottomBarHeight.constant = -52
         if mode == .select { mode = .page }
     }
 
@@ -829,7 +832,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         readerBar.isHidden = true
         let rule = UIView()
         rule.backgroundColor = .separator
-        let tools = UIStackView(arrangedSubviews: [readBack, listenButton, shareButton, textButton, changeButton])
+        Self.styleMagnifier(changeButton)
+        let tools = UIStackView(arrangedSubviews: [readBack, listenButton, changeButton, shareButton, textButton])
         tools.distribution = .equalSpacing
         tools.alignment = .center
         for v in [rule, tools] as [UIView] {
@@ -922,9 +926,10 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     }
 
     private func flash(_ text: String) {
-        liftButton.configuration?.title = text
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            self?.liftButton.configuration?.title = "Filter"
+        subtitleLabel.text = text
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self else { return }
+            self.updateBar(lifted: self.lastCounts.lifted, kinds: self.lastCounts.kinds)
         }
     }
 
