@@ -100,6 +100,12 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     private let readBack = UIButton(type: .system)
     /// The reading view's toolbar: back, Listen, share, text size, edit filter.
     private let readerBar = UIView()
+    /// Original | Filtered: switches views. The magnifier is only for building the filter.
+    private let viewSwitch = UISegmentedControl(items: ["Original", "Filtered"])
+    private var titlesAfterBack: NSLayoutConstraint!
+    private var titlesAtEdge: NSLayoutConstraint!
+    /// Where Cancel (or back) in picking returns to.
+    private var pickReturn = Mode.page
     /// Reads the filtered page aloud; its player sits at the bottom while it's on.
     private let narrator = Narrator()
     private let player = PlayerBar()
@@ -150,7 +156,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     init(url: URL, filter: Bool = false) {
         startURL = url
         super.init(nibName: nil, bundle: nil)
-        liftOnLoad = filter
+        // A site with a filter (the user's or a suggested one) opens straight in the filtered view.
+        liftOnLoad = filter || url.host.map(Self.hasFilter) ?? false
         modalPresentationStyle = .fullScreen
         transitioningDelegate = SideSlide.shared
     }
@@ -229,7 +236,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         }
         pickBar.isHidden = true
         pickBar.onStart = { [weak self] in self?.finishPicking() }
-        pickBar.onList = { [weak self] in self?.pickFromList() }
+        pickBar.onCancel = { [weak self] in self?.cancelPicking() }
 
         // The site sits on top of the reader and slides away to reveal it; the site ends
         // above the bottom bar, the reader runs to the bottom of the screen.
@@ -352,13 +359,19 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
 
         titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         titleLabel.text = startURL.host
-        titleLabel.textAlignment = .center
+        titleLabel.textAlignment = .left
         subtitleLabel.font = .systemFont(ofSize: 12)
         subtitleLabel.textColor = .secondaryLabel
-        subtitleLabel.textAlignment = .center
+        subtitleLabel.textAlignment = .left
         let titles = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
         titles.axis = .vertical
-        titles.alignment = .center
+        titles.alignment = .leading
+
+        viewSwitch.selectedSegmentTintColor = Self.accent
+        viewSwitch.setTitleTextAttributes([.foregroundColor: UIColor.white, .font: UIFont.systemFont(ofSize: 13, weight: .semibold)], for: .selected)
+        viewSwitch.setTitleTextAttributes([.foregroundColor: Self.iconTint, .font: UIFont.systemFont(ofSize: 13, weight: .medium)], for: .normal)
+        viewSwitch.selectedSegmentIndex = 0
+        viewSwitch.addAction(UIAction { [weak self] _ in self?.switchView() }, for: .valueChanged)
 
         let iconButton = { (button: UIButton, symbol: String, label: String, action: @escaping () -> Void) in
             var c = UIButton.Configuration.plain()
@@ -380,24 +393,25 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         textButton.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] done in
             done(self?.textMenuItems() ?? [])
         }])
-        let right = UIStackView(arrangedSubviews: [])
+        let right = UIStackView(arrangedSubviews: [viewSwitch])
         right.spacing = 0
 
         for v in [backButton, titles, right, rule] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             bar.addSubview(v)
         }
+        titlesAfterBack = titles.leadingAnchor.constraint(equalTo: backButton.trailingAnchor, constant: 4)
+        titlesAtEdge = titles.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 20)
+        titlesAtEdge.isActive = true
         NSLayoutConstraint.activate([
             backButton.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 4),
             backButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             backButton.widthAnchor.constraint(equalToConstant: 44),
             backButton.heightAnchor.constraint(equalToConstant: 44),
-            // Centred on the bar when there's room, else in the space between the buttons.
-            { let c = titles.centerXAnchor.constraint(equalTo: bar.centerXAnchor); c.priority = .defaultHigh; return c }(),
+            // Site name on the left (after back while picking), the view switch on the right.
             titles.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            titles.leadingAnchor.constraint(greaterThanOrEqualTo: backButton.trailingAnchor, constant: 4),
-            titles.trailingAnchor.constraint(lessThanOrEqualTo: right.leadingAnchor, constant: -4),
-            right.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -8),
+            titles.trailingAnchor.constraint(lessThanOrEqualTo: right.leadingAnchor, constant: -10),
+            right.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -16),
             right.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             rule.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
             rule.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
@@ -422,8 +436,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
 
     private func makeLiftButton() {
         Self.styleMagnifier(liftButton)
-        liftButton.accessibilityLabel = "Filter"
-        liftButton.addAction(UIAction { [weak self] _ in self?.lift() }, for: .primaryActionTriggered)
+        liftButton.accessibilityLabel = "Build filter"
+        liftButton.addAction(UIAction { [weak self] _ in self?.buildOnPage() }, for: .primaryActionTriggered)
     }
 
     /// Shows what the top bar should for the current mode.
@@ -441,14 +455,34 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         shareButton.isHidden = mode == .page || mode == .select
         listenButton.isEnabled = !narrator.isOn
         textButton.isHidden = mode != .read
+        viewSwitch.isHidden = mode == .select || mode == .pick
+        viewSwitch.selectedSegmentIndex = mode == .read ? 1 : 0
+        viewSwitch.setEnabled(mode == .read || siteHasRecipe, forSegmentAt: 1)
+        titlesAtEdge.isActive = !(mode == .select || mode == .pick)
+        titlesAfterBack.isActive = mode == .select || mode == .pick
         switch mode {
         case .page: subtitleLabel.text = "Original page"
         case .pick, .select: subtitleLabel.text = "\(lifted) of \(kinds) styles in filter"
-        case .read: subtitleLabel.text = filterSource == "suggested" ? "Suggested filter" : "Filtered · saved for this site"
+        case .read: subtitleLabel.text = filterSource == "suggested" ? "Suggested filter" : "Saved for this site"
         }
     }
 
+    /// Lifts the page, then shows it filtered: a site with a filter (the user's or a
+    /// suggested one) reads straight away; a new one is picked on the page itself.
     private func lift() {
+        liftPage { [weak self] json, keep in
+            guard let self, let host = self.webView.url?.host else { return }
+            if RecipeHandler.recipe(forHost: host) != nil || keep != nil {
+                self.showReader(json, suggested: keep)
+            } else {
+                self.pickReturn = .page
+                self.startPicking(keep: nil, coach: true)
+            }
+        }
+    }
+
+    /// Runs lift.js on the page and looks up the site's suggested filter.
+    private func liftPage(then next: @escaping (_ json: String, _ suggested: [String]?) -> Void) {
         // lift.js lives in the isolated client world, so that's where it's called.
         let js = "JSON.stringify(window.NewsJuice ? NewsJuice.lift() : { ok: false, reason: 'lift.js not loaded' })"
         webView.evaluateJavaScript(js, in: nil, in: .defaultClient) { [weak self] result in
@@ -464,18 +498,11 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             let groups = obj["groups"] as? [[String: Any]] ?? []
             NSLog("NewsJuice lift %@: %d groups, top %@", self.webView.url?.absoluteString ?? "",
                   groups.count, groups.prefix(4).compactMap { $0["id"] as? String }.joined(separator: " | "))
-            guard let host = self.webView.url?.host else { self.showReader(json, suggested: nil); return }
+            self.lastLift = json
+            guard let host = self.webView.url?.host else { next(json, nil); return }
             SuggestedFilters.lookup(host: host, article: obj["article"] as? Bool) { [weak self] keep in
-                guard let self else { return }
-                self.lastLift = json
-                self.lastSuggested = keep
-                // A site with a filter (the user's or a suggested one) reads straight away;
-                // a new one is picked on the page itself.
-                if RecipeHandler.recipe(forHost: host) != nil || keep != nil {
-                    self.showReader(json, suggested: keep)
-                } else {
-                    self.startPicking(keep: nil, coach: true)
-                }
+                self?.lastSuggested = keep
+                next(json, keep)
             }
         }
     }
@@ -555,7 +582,9 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             if still { self.readerView.alpha = 0 } else { self.readerView.transform = CGAffineTransform(translationX: width, y: 0) }
         }
         let done = { (_: Bool) in
-            if self.mode == .page { self.readerView.isHidden = true }
+            // Picking may already have started on the page by now; the reader stays hidden
+            // unless something brought it back.
+            if self.mode != .read { self.readerView.isHidden = true }
             self.readerView.transform = .identity
             self.readerView.alpha = 1
         }
@@ -568,12 +597,13 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
 
     /// Puts the page into picking mode (pick.js): keep is the filter to start from, or
     /// nil for a first guess (the suggested filter, else the main text and headline).
-    private func startPicking(keep: [String]?, coach: Bool) {
+    private func startPicking(keep: [String]?, coach: Bool, startFrom: [String]? = nil) {
         guard let lift = lastLift else { return }
+        let from = startFrom ?? lastSuggested
         let json = { (v: Any?) in
             v.flatMap { try? JSONSerialization.data(withJSONObject: $0) }.flatMap { String(data: $0, encoding: .utf8) } ?? "null"
         }
-        readerView.evaluateJavaScript("JSON.stringify(NewsJuice.pickPrep(\(lift), \(json(lastSuggested))))") { [weak self] value, _ in
+        readerView.evaluateJavaScript("JSON.stringify(NewsJuice.pickPrep(\(lift), \(json(from))))") { [weak self] value, _ in
             guard let self, let text = value as? String, let data = text.data(using: .utf8),
                   let prep = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let kinds = prep["kinds"] as? [String: String] else { return }
@@ -612,9 +642,11 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         if mode == .select { mode = .page }
     }
 
+    /// Cancel (or back) while picking: back to where picking started, nothing saved.
     private func cancelPicking() {
         endPicking()
         updateBar(lifted: 0, kinds: 0)
+        if pickReturn == .read, let lift = lastLift { showReader(lift, suggested: lastSuggested) }
     }
 
     /// The site's saved groups for its other kinds of page, which picking here leaves alone.
@@ -634,17 +666,6 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         showReader(lift, suggested: lastSuggested)
     }
 
-    /// The card list, for text too small to tap on the page.
-    private func pickFromList() {
-        guard mode == .select, let lift = lastLift else { return }
-        let keep = groupsElsewhere + pickKeep
-        let list = (try? JSONSerialization.data(withJSONObject: keep)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
-        endPicking()
-        readerView.evaluateJavaScript("NewsJuice.showReader(\(lift), { recipe: \(list), mode: 'pick' }), true") { [weak self] _, _ in
-            self?.revealReader()
-        }
-    }
-
     /// The magnifier in the reader: edit the filter on the page, starting from the picks.
     private func editOnPage() {
         stopListening()
@@ -652,7 +673,28 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             guard let self else { return }
             let keep = value as? [String]
             self.toPage()
+            self.pickReturn = .read
             self.startPicking(keep: keep, coach: false)
+        }
+    }
+
+    /// The magnifier on the page: build (or edit) the filter on the page itself, starting
+    /// from the site's filter, or the suggested one, or a first guess.
+    private func buildOnPage() {
+        liftPage { [weak self] json, suggested in
+            guard let self else { return }
+            self.pickReturn = .page
+            let own = self.webView.url?.host.flatMap(RecipeHandler.recipe(forHost:))
+            self.startPicking(keep: nil, coach: own == nil && suggested == nil, startFrom: own ?? suggested)
+        }
+    }
+
+    /// Original | Filtered.
+    private func switchView() {
+        if viewSwitch.selectedSegmentIndex == 0 {
+            if mode == .read { toPage() }
+        } else if mode == .page {
+            lift()
         }
     }
 
@@ -1790,11 +1832,11 @@ enum ClipCache {
     }
 }
 
-/// The bar under the page while picking on it: what the last tap did, a way to the card
-/// list, and Start reading.
+/// The bar under the page while picking on it: what the last tap did, Cancel, and
+/// Start reading.
 final class PickBar: UIView {
     static let height: CGFloat = 104
-    var onStart: (() -> Void)?, onList: (() -> Void)?
+    var onStart: (() -> Void)?, onCancel: (() -> Void)?
     private let hint = UILabel()
     private let list = UIButton(type: .system)
     private let start = UIButton(type: .system)
@@ -1811,10 +1853,10 @@ final class PickBar: UIView {
         var lc = UIButton.Configuration.plain()
         lc.contentInsets = .zero
         lc.baseForegroundColor = Self.tint
-        lc.attributedTitle = AttributedString("List", attributes: AttributeContainer([.font: UIFont.systemFont(ofSize: 13, weight: .semibold)]))
+        lc.attributedTitle = AttributedString("Cancel", attributes: AttributeContainer([.font: UIFont.systemFont(ofSize: 14, weight: .semibold)]))
         list.configuration = lc
-        list.accessibilityLabel = "Pick from a list instead"
-        list.addAction(UIAction { [weak self] _ in self?.onList?() }, for: .primaryActionTriggered)
+        list.accessibilityLabel = "Cancel without saving"
+        list.addAction(UIAction { [weak self] _ in self?.onCancel?() }, for: .primaryActionTriggered)
         start.addAction(UIAction { [weak self] _ in self?.onStart?() }, for: .primaryActionTriggered)
         for v in [hint, list, start] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
