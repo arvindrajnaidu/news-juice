@@ -87,6 +87,37 @@
     return collapsed;
   }
 
+  // Pop-ups (paywalls, sign-up and consent boxes) lock the page while they're up:
+  // overflow hidden, or the body pinned with position fixed. The pop-up itself is
+  // hidden while picking, but the lock would stay and the page couldn't scroll. So the
+  // page is unlocked while picking, and the site's own settings come back afterwards.
+  var UNLOCK = { overflow: 'visible', 'overflow-y': 'auto', height: 'auto', 'max-height': 'none',
+    position: 'static', top: 'auto', 'touch-action': 'auto' };
+  function unlockScroll() {
+    var saved = [];
+    [document.documentElement, document.body].forEach(function (el) {
+      if (!el) return;
+      Object.keys(UNLOCK).forEach(function (prop) {
+        saved.push([el, prop, el.style.getPropertyValue(prop), el.style.getPropertyPriority(prop)]);
+        el.style.setProperty(prop, el === document.documentElement && prop === 'overflow' ? 'auto' : UNLOCK[prop], 'important');
+      });
+    });
+    return saved;
+  }
+
+  // The nearest element under a point that scrolls on its own (an inner scroll area),
+  // or null when the page itself scrolls there.
+  function scrollerAt(x, y) {
+    var under = document.elementsFromPoint(x, y).filter(function (el) {
+      return !(el.id && el.id.indexOf('nj-pick') === 0) && !el.closest('#nj-pick');
+    })[0];
+    for (var el = under; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+      var oy = getComputedStyle(el).overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 4) return el;
+    }
+    return null;
+  }
+
   function start(opts) {
     stop();
     var els = (window.NewsJuice && NewsJuice._els) || [];
@@ -109,6 +140,7 @@
     els.forEach(function (el) { for (var n = el; n && !holding.has(n); n = n.parentElement) holding.add(n); });
     var seenFixed = new WeakSet(), seenAds = new WeakSet();
     var hidden = hideFixed([], seenFixed);
+    var unlocked = unlockScroll();
     var collapsed = collapseAds([], holding, seenAds);
     document.documentElement.classList.add('nj-picking');
     document.documentElement.append(style, wash, layer, shield);
@@ -196,6 +228,24 @@
       if (hit) toggle(hit.g);
     }
     shield.addEventListener('click', onTap);
+    // The shield sits over everything, so a drag over an inner scroll area would scroll
+    // the page instead; it's passed to that area by hand.
+    var drag = null;
+    shield.addEventListener('touchstart', function (e) {
+      var t = e.touches[0];
+      var area = t && scrollerAt(t.clientX, t.clientY);
+      drag = area ? { area: area, y: t.clientY } : null;
+    }, { passive: true });
+    shield.addEventListener('touchmove', function (e) {
+      if (!drag) return;
+      var t = e.touches[0];
+      var dy = drag.y - t.clientY;
+      var before = drag.area.scrollTop;
+      drag.area.scrollTop += dy;
+      drag.y = t.clientY;
+      // Hand over to the page at the area's ends.
+      if (drag.area.scrollTop !== before) e.preventDefault();
+    }, { passive: false });
     // Keep presses and long-presses from reaching the site underneath.
     ['touchstart', 'touchend', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'contextmenu'].forEach(function (t) {
       shield.addEventListener(t, function (e) { e.stopPropagation(); if (t === 'contextmenu') e.preventDefault(); },
@@ -203,7 +253,7 @@
     });
 
     paint();
-    state = { style: style, wash: wash, layer: layer, shield: shield, hidden: hidden, collapsed: collapsed,
+    state = { style: style, wash: wash, layer: layer, shield: shield, hidden: hidden, collapsed: collapsed, unlocked: unlocked,
       sweep: sweep, replace: replace, resized: resized };
     return true;
   }
@@ -217,6 +267,9 @@
     state.hidden.forEach(function (h) {
       if (h[1]) h[0].style.setProperty('visibility', h[1], h[2]);
       else h[0].style.removeProperty('visibility');
+    });
+    state.unlocked.forEach(function (u) {
+      if (u[2]) u[0].style.setProperty(u[1], u[2], u[3]); else u[0].style.removeProperty(u[1]);
     });
     state.collapsed.forEach(function (c) {
       if (c[1]) c[0].style.setProperty('display', c[1], c[2]);
