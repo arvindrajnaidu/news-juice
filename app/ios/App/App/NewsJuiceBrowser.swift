@@ -674,10 +674,16 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
 
     /// Start reading: save the filter and show the filtered page.
     private func finishPicking() {
-        guard mode == .select, !pickKeep.isEmpty, let lift = lastLift, let host = webView.url?.host else { return }
+        guard mode == .select, !pickKeep.isEmpty, let host = webView.url?.host else { return }
         RecipeHandler.save(host: host, keep: groupsElsewhere + pickKeep)
-        endPicking()
-        showReader(lift, suggested: lastSuggested)
+        let keep = pickKeep
+        // Read the page again first: text that loaded while picking belongs in the view.
+        liftPage { [weak self] json, suggested in
+            guard let self, self.mode == .select else { return }
+            self.pickKeep = keep
+            self.endPicking()
+            self.showReader(json, suggested: suggested)
+        }
     }
 
     /// The magnifier in the reader: edit the filter on the page, starting from the picks.

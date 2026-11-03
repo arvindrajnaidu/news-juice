@@ -147,9 +147,18 @@
 
     // One box per block, in document coordinates, so it scrolls with the page.
     var boxes = [];
-    els.forEach(function (el, i) {
-      if (!el || !el.isConnected) return;
-      var g = gs[i];
+    var boxed = new WeakSet();
+    var spots = {};
+    function addBoxes(els, gs) {
+      els.forEach(function (el, i) {
+        if (!el || !el.isConnected || boxed.has(el)) return;
+        boxed.add(el);
+        for (var n = el; n && !holding.has(n); n = n.parentElement) holding.add(n);
+        addBox(el, gs[i]);
+      });
+    }
+    function addBox(el, g) {
+      spots[g] = (spots[g] || 0) + 1;
       var box = document.createElement('div');
       box.className = 'nj-box';
       box.setAttribute('role', 'button');
@@ -161,7 +170,8 @@
       wash.appendChild(fade);
       boxes.push({ g: g, el: el, box: box, fade: fade, top: 0, left: 0, w: 0, h: 0,
         text: (el.innerText || '').trim().slice(0, 80) });
-    });
+    }
+    addBoxes(els, gs);
 
     // Pages keep moving after they load (images and ads arrive, fonts swap), so the
     // boxes follow their text, and ads and banners that turn up later are hidden.
@@ -194,8 +204,28 @@
     }, 1000);
     addEventListener('resize', replace);
 
-    var spots = {};
-    boxes.forEach(function (b) { spots[b.g] = (spots[b.g] || 0) + 1; });
+    // Pages that load more as you scroll: once the page has changed and settled, it's
+    // read again and the new text gets boxes too (highlighted if its style is already
+    // in the filter). Only new elements get boxes; the read waits until the page and
+    // the scrolling have settled.
+    var changed = false, rescanTimer = null;
+    var rescan = function () {
+      clearTimeout(rescanTimer);
+      rescanTimer = setTimeout(function () {
+        if (!changed) return;
+        changed = false;
+        var before = boxes.length;
+        NewsJuice.lift();
+        addBoxes(NewsJuice._els || [], NewsJuice._gs || []);
+        if (boxes.length !== before) { paint(); replace(); }
+      }, 800);
+    };
+    var watcher = new MutationObserver(function () { changed = true; rescan(); });
+    watcher.observe(document.body, { childList: true, subtree: true });
+    // Some pages only draw text as it scrolls into view, without changing the page, so
+    // stopping scrolling counts as a change too.
+    var onScroll = function () { changed = true; rescan(); };
+    addEventListener('scroll', onScroll, { passive: true });
 
     function paint() {
       boxes.forEach(function (b) {
@@ -254,7 +284,8 @@
 
     paint();
     state = { style: style, wash: wash, layer: layer, shield: shield, hidden: hidden, collapsed: collapsed, unlocked: unlocked,
-      sweep: sweep, replace: replace, resized: resized };
+      sweep: sweep, replace: replace, resized: resized, watcher: watcher, onScroll: onScroll,
+      rescanTimer: function () { return rescanTimer; } };
     return true;
   }
 
@@ -262,6 +293,9 @@
     if (!state) return;
     clearInterval(state.sweep);
     state.resized.disconnect();
+    state.watcher.disconnect();
+    clearTimeout(state.rescanTimer());
+    removeEventListener('scroll', state.onScroll);
     removeEventListener('resize', state.replace);
     [state.style, state.wash, state.layer, state.shield].forEach(function (n) { n.remove(); });
     state.hidden.forEach(function (h) {
