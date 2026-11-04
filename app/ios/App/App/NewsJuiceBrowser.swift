@@ -293,9 +293,9 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             pageBack.widthAnchor.constraint(equalToConstant: 44),
             pageBack.heightAnchor.constraint(equalToConstant: 44),
             liftButton.centerXAnchor.constraint(equalTo: bottomBar.centerXAnchor),
-            liftButton.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: 4),
-            liftButton.widthAnchor.constraint(equalToConstant: 56),
-            liftButton.heightAnchor.constraint(equalToConstant: 44),
+            liftButton.centerYAnchor.constraint(equalTo: pageBack.centerYAnchor),
+            liftButton.widthAnchor.constraint(equalToConstant: Self.magnifierSize.width),
+            liftButton.heightAnchor.constraint(equalToConstant: Self.magnifierSize.height),
 
             pickBar.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: 16),
             pickBar.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -16),
@@ -435,15 +435,21 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     }
 
     /// The full-width Filter button in the bar under the page.
-    /// The magnifying glass: the app's main action, teal and a little larger than the
-    /// other icons, in the middle of the bottom bar (Filter on the page, Edit filter in
-    /// the reader), so it's always in the same place.
+    /// The magnifying glass: the app's main action, a solid teal button in the middle of
+    /// the bottom bar (Filter on the page, Edit filter in the reader), so it's always in
+    /// the same place and clearly something to tap.
+    private static let magnifierSize = CGSize(width: 104, height: 40)
+
     private static func styleMagnifier(_ button: UIButton) {
-        var c = UIButton.Configuration.plain()
+        var c = UIButton.Configuration.filled()
         c.image = UIImage(systemName: "magnifyingglass",
-                          withConfiguration: UIImage.SymbolConfiguration(pointSize: 24, weight: .bold))
+                          withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .bold))
+        c.attributedTitle = AttributedString("Filter", attributes: AttributeContainer([.font: UIFont.systemFont(ofSize: 16, weight: .semibold)]))
+        c.imagePadding = 6
         c.contentInsets = .zero
-        c.baseForegroundColor = Self.accent
+        c.cornerStyle = .capsule
+        c.baseBackgroundColor = Self.accent
+        c.baseForegroundColor = .white
         button.configuration = c
     }
 
@@ -904,6 +910,8 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         let rule = UIView()
         rule.backgroundColor = .separator
         Self.styleMagnifier(changeButton)
+        for c in changeButton.constraints where c.firstAttribute == .width { c.constant = Self.magnifierSize.width }
+        for c in changeButton.constraints where c.firstAttribute == .height { c.constant = Self.magnifierSize.height }
         let tools = UIStackView(arrangedSubviews: [readBack, listenButton, changeButton, shareButton, textButton])
         tools.distribution = .equalSpacing
         tools.alignment = .center
