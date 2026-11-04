@@ -145,10 +145,11 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         : UIColor(red: 0.953, green: 0.937, blue: 0.902, alpha: 1) }
     /// Deep teal for the main actions (white on it); highlighter yellow only marks picked text.
     private static let accent = UIColor(red: 0.122, green: 0.435, blue: 0.42, alpha: 1)
-    /// Warm grey for the small icon controls (back, globe, sliders, house).
+    /// The accent teal for icon controls (lighter in dark mode, to read on the dark bar).
+    /// Grey is only for things that are disabled.
     private static let iconTint = UIColor { $0.userInterfaceStyle == .dark
-        ? UIColor(red: 0.70, green: 0.67, blue: 0.62, alpha: 1)
-        : UIColor(red: 0.42, green: 0.39, blue: 0.345, alpha: 1) }
+        ? UIColor(red: 0.37, green: 0.72, blue: 0.69, alpha: 1)
+        : UIColor(red: 0.122, green: 0.435, blue: 0.42, alpha: 1) }
     private static let ink = UIColor(red: 0.114, green: 0.106, blue: 0.094, alpha: 1)
 
     init(url: URL) {
@@ -383,6 +384,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         viewSwitch.selectedSegmentTintColor = Self.accent
         viewSwitch.setTitleTextAttributes([.foregroundColor: UIColor.white, .font: UIFont.systemFont(ofSize: 13, weight: .semibold)], for: .selected)
         viewSwitch.setTitleTextAttributes([.foregroundColor: Self.iconTint, .font: UIFont.systemFont(ofSize: 13, weight: .medium)], for: .normal)
+        viewSwitch.setTitleTextAttributes([.foregroundColor: UIColor.tertiaryLabel, .font: UIFont.systemFont(ofSize: 13, weight: .medium)], for: .disabled)
         viewSwitch.selectedSegmentIndex = 0
         viewSwitch.addAction(UIAction { [weak self] _ in self?.switchView() }, for: .valueChanged)
 
@@ -1790,8 +1792,8 @@ final class PlayerBar: UIView {
     private let voiceLabel = UILabel()
 
     private static let tint = UIColor { $0.userInterfaceStyle == .dark
-        ? UIColor(red: 0.70, green: 0.67, blue: 0.62, alpha: 1)
-        : UIColor(red: 0.42, green: 0.39, blue: 0.345, alpha: 1) }
+        ? UIColor(red: 0.37, green: 0.72, blue: 0.69, alpha: 1)
+        : UIColor(red: 0.122, green: 0.435, blue: 0.42, alpha: 1) }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1920,8 +1922,8 @@ final class PickBar: UIView {
     private let start = UIButton(type: .system)
 
     private static let tint = UIColor { $0.userInterfaceStyle == .dark
-        ? UIColor(red: 0.70, green: 0.67, blue: 0.62, alpha: 1)
-        : UIColor(red: 0.42, green: 0.39, blue: 0.345, alpha: 1) }
+        ? UIColor(red: 0.37, green: 0.72, blue: 0.69, alpha: 1)
+        : UIColor(red: 0.122, green: 0.435, blue: 0.42, alpha: 1) }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
