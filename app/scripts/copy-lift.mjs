@@ -1,8 +1,9 @@
 // Copies the lift scripts from ../lift into www/lift so `cap sync` bundles them
 // into the native app (ios/App/App/public/lift). The Swift browser injects them
 // into every page it opens. lift/ at the repo root stays the only source.
-// Also copies ../filters/filters.json to www/filters (the bundled suggested filters) and
-// ../test/capture-page.js to www/debug for the Debug-only fixture capture.
+// Also copies ../test/capture-page.js to www/debug for the Debug-only fixture capture.
+// Suggested filters for named sites are no longer bundled (App Review 5.2.2): any old
+// copy in www/filters is removed so `cap sync` doesn't ship it.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +18,5 @@ for (const f of ['lift.js', 'pick.js', 'reader.js']) {
 }
 await fs.mkdir(path.join(app, 'www', 'debug'), { recursive: true });
 await fs.copyFile(path.join(app, '..', 'test', 'capture-page.js'), path.join(app, 'www', 'debug', 'capture-page.js'));
-// The suggested filters bundled with the app, for first launch and offline use.
-await fs.mkdir(path.join(app, 'www', 'filters'), { recursive: true });
-await fs.copyFile(path.join(app, '..', 'filters', 'filters.json'), path.join(app, 'www', 'filters', 'filters.json'));
+await fs.rm(path.join(app, 'www', 'filters'), { recursive: true, force: true });
 console.log(`copied lift.js, reader.js -> ${path.relative(app, dest)}, capture-page.js -> www/debug`);

@@ -86,6 +86,11 @@
     '.nj-article .nj-speaking{background:rgba(245,200,60,.3);box-shadow:0 0 0 8px rgba(245,200,60,.3);border-radius:3px}',
     '.listening .nj-article{padding-bottom:170px}',
     '.nj-article .src{font:13px -apple-system,system-ui,sans-serif;color:#7a7368;word-break:break-all;margin-top:2em}',
+    // Where the text comes from, above it, linking back to the original page.
+    '.nj-article .nj-from{font:600 13px -apple-system,system-ui,sans-serif;color:#7a7368;margin:0 0 1.2em;',
+    '  text-transform:uppercase;letter-spacing:.04em}',
+    '.nj-article .nj-from a{color:#1f6f6b;text-decoration:none}',
+    '@media (prefers-color-scheme:dark){.nj-article .nj-from a{color:#5fb8b0}}',
     '@media (prefers-color-scheme:dark){.nj-sheet{background:#22201c;color:#e8e3da}.nj-sheet.read{background:#1a1916}',
     '  .nj-card{color:#e8e3da;background:rgba(255,255,255,.06)}.nj-card.on{background:#2e2b26}',
     '  .read .nj-sample{color:#e8e3da}.nj-intro{color:#b3ab9f}.nj-reset{color:#b3ab9f}.nj-badge{background:#3a372f;color:#cfc8bb}}',
@@ -246,6 +251,15 @@
     return html + br(b.text.slice(at));
   }
 
+  // The source line over the article: the site's name, linking to the original page.
+  function fromHTML(r) {
+    var site = r.host || '';
+    try { site = site || new URL(r.url).hostname.replace(/^www\./, ''); } catch (e) { /* no url */ }
+    if (!site) return '';
+    return '<p class="nj-from">From <a href="' + esc(r.url || '') + '" data-nj-original>' + esc(site) + '</a> · ' +
+      '<a href="' + esc(r.url || '') + '" data-nj-original>View original</a></p>';
+  }
+
   // The lifted groups' blocks in page order, as the article.
   function articleHTML(r, keep) {
     var kept = {};
@@ -269,7 +283,7 @@
       else html += '<p>' + t + '</p>';
     });
     if (inList) html += '</ul>';
-    return html + '<p class="src">' + esc(r.url || '') + '</p>';
+    return fromHTML(r) + html + '<p class="src">' + esc(r.url || '') + '</p>';
   }
 
   // The page's own text colour for a sample, unless it's too pale to read on a card
@@ -481,6 +495,11 @@
       }
       e.preventDefault();
       if (!e.isTrusted) return;
+      if (a.hasAttribute('data-nj-original')) {
+        if (inApp()) notifyApp({ type: 'original', url: a.href });
+        else location.href = a.href;
+        return;
+      }
       if (inApp()) notifyApp({ type: 'navigate', url: a.href });
       else location.href = a.href;
     });
@@ -498,7 +517,7 @@
     var speech = function () {
       if (mode !== 'read') return null;
       var parts = [];
-      article.querySelectorAll('h1,h2,p:not(.src),li').forEach(function (el) {
+      article.querySelectorAll('h1,h2,p:not(.src):not(.nj-from),li').forEach(function (el) {
         var text = el.innerText.trim();
         if (!text) return;
         el.setAttribute('data-nj-say', parts.length);
@@ -518,8 +537,38 @@
         sheet.scrollTo({ top: sheet.scrollTop + box.top - innerHeight / 3, behavior: 'smooth' });
       }
     };
+    // The article as it reads now, for the reading list (kept on the device).
+    var saved = function () {
+      if (mode !== 'read') return null;
+      return { title: r.title || '', url: r.url || '', host: r.host || '', html: articleHTML(r, keep) };
+    };
     current = { toRead: toRead, toPick: toPick, close: close, recipe: recipe, speech: speech, speaking: speaking,
-      keep: function () { return keep.slice(); } };
+      saved: saved, keep: function () { return keep.slice(); } };
+  }
+
+  // An article from the reading list: the HTML articleHTML made when it was saved, shown
+  // read-only. Links and "View original" go through the app.
+  function showSaved(a) {
+    var old = document.getElementById('news-juice-reader');
+    if (old) old.remove();
+    current = null;
+    var host = document.createElement('div');
+    host.id = 'news-juice-reader';
+    var root = host.attachShadow({ mode: 'open' });
+    root.innerHTML = '<style>' + CSS + '</style><div class="nj-sheet read"><div class="nj-article"></div>' +
+      '<div class="nj-pad"></div></div>';
+    root.querySelector('.nj-article').innerHTML = a.html || '';
+    document.documentElement.appendChild(host);
+    applyTextStyle();
+    root.querySelector('.nj-article').addEventListener('click', function (e) {
+      var link = e.target.closest('a');
+      if (!link) return;
+      e.preventDefault();
+      if (!e.isTrusted) return;
+      var type = link.hasAttribute('data-nj-original') ? 'original' : 'navigate';
+      if (inApp()) notifyApp({ type: type, url: link.href });
+      else location.href = link.href;
+    });
   }
 
   window.NewsJuice = window.NewsJuice || {};
@@ -566,6 +615,8 @@
     textStyle = { scale: +s.scale || 1, sans: !!s.sans };
     applyTextStyle();
   };
+  window.NewsJuice.savedArticle = function () { return current ? current.saved() : null; };
+  window.NewsJuice.showSaved = showSaved;
   window.NewsJuice.speechParts = function () { return current ? current.speech() : null; };
   // i: the part being read (from speechParts), or null when listening stops.
   window.NewsJuice.speaking = function (i) { if (current) current.speaking(i); };

@@ -54,29 +54,33 @@
 <h1>News Lens</h1>
 <p class="sub">Open a news page, then tap Filter to read just the text you want.</p>
 <!-- A plain text field with the URL keyboard: type="url" would make the browser refuse
-     "ndtv.com" (no https://) and silently swallow the Go. -->
+     "example.com" (no https://) and silently swallow the Go. -->
 <form id="go" novalidate>
   <div class="field">
     <input id="url" type="text" inputmode="url" enterkeyhint="go" autocapitalize="none" autocorrect="off"
-           autocomplete="off" spellcheck="false" placeholder="ndtv.com or any article URL" aria-label="Site or article address">
+           autocomplete="off" spellcheck="false" placeholder="Any web address" aria-label="Site or article address">
     <button type="button" class="clear" id="clear" aria-label="Clear" hidden>✕</button>
   </div>
   <button type="submit" class="go" aria-label="Go"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
     stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path></svg></button>
 </form>
 <p class="hint" id="hint" role="status"></p>
+<h2>Reading list</h2>
+<!-- Articles saved on this device (filtered text, readable offline); filled by the app. -->
+<ul id="saved"></ul>
+<p class="empty" id="saved-empty">Save an article to read later, even offline: in the filtered view, tap Share, then Add to Reading List.</p>
 <h2>Your sites</h2>
-<!-- Filled from the saved list (seeded with SEED_SITES on first launch). -->
+<!-- Filled from the saved list: the sites the user has opened. -->
 <ul id="sites"></ul>
-<p class="empty" id="empty" hidden>No sites yet. Type one above and it'll be added here.</p>
+<p class="empty" id="empty" hidden>No sites yet. Type any web address above and it'll be added here.</p>
 <div class="toast" id="toast" hidden><span id="toast-text"></span><button type="button" id="undo">Undo</button></div>
 <script>
   var field = document.getElementById('url');
   var clear = document.getElementById('clear');
   var hint = document.getElementById('hint');
 
-  // What the user typed as an address: "ndtv.com", "www.ndtv.com/india", a full URL,
-  // or a bare name ("ndtv" becomes ndtv.com). Returns null for anything else.
+  // What the user typed as an address: "example.com", "www.example.com/news", a full URL,
+  // or a bare name ("example" becomes example.com). Returns null for anything else.
   function toURL(text) {
     text = text.trim();
     if (!text || /\s/.test(text)) return null;
@@ -94,24 +98,6 @@
   }
 
   // ---- Your sites: a list kept on this device, keyed by hostname without "www.". ----
-  var SEED_SITES = [
-    ['NDTV India', 'https://www.ndtv.com/india'],
-    ['The Hindu', 'https://www.thehindu.com/news/national/'],
-    ['Indian Express', 'https://indianexpress.com/section/india/'],
-    ['The Guardian', 'https://www.theguardian.com/world'],
-    ['AP News', 'https://apnews.com/world-news'],
-    ['CNN', 'https://edition.cnn.com/world'],
-    ['BBC News', 'https://www.bbc.com/news'],
-    ['Reuters', 'https://www.reuters.com/world/'],
-    ['The New York Times', 'https://www.nytimes.com/section/world'],
-    ['The Washington Post', 'https://www.washingtonpost.com/world/'],
-    ['Al Jazeera', 'https://www.aljazeera.com/news/'],
-    ['NPR', 'https://www.npr.org/sections/news/'],
-    ['Times of India', 'https://timesofindia.indiatimes.com/india'],
-    ['Hindustan Times', 'https://www.hindustantimes.com/india-news'],
-    ['India Today', 'https://www.indiatoday.in/india'],
-    ['The Verge', 'https://www.theverge.com/tech'],
-  ];
   var STORE = 'newslens:sites';
   var TRASH = '<span><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
     'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path>' +
@@ -125,9 +111,18 @@
   function loadSites() {
     try {
       var saved = JSON.parse(localStorage.getItem(STORE) || 'null');
-      if (Array.isArray(saved)) return saved;
-    } catch (e) { /* fall through to the seed */ }
-    return SEED_SITES.map(function (s) { return { name: s[0], url: s[1], host: hostOf(s[1]) }; });
+      if (Array.isArray(saved)) {
+        // Before 1.1 the list started with a set of sites the app chose. Those are taken
+        // out once (the app suggests no sites); every site the user opened has auto set.
+        if (!localStorage.getItem(STORE + ':seedsGone')) {
+          saved = saved.filter(function (s) { return s.auto; });
+          localStorage.setItem(STORE, JSON.stringify(saved));
+          localStorage.setItem(STORE + ':seedsGone', '1');
+        }
+        return saved;
+      }
+    } catch (e) { /* storage blocked: start empty */ }
+    return [];
   }
   var sites = loadSites();
 
@@ -255,6 +250,33 @@
 
   render();
 
+  // ---- Reading list: kept by the app (on this device); this only lists it. ----
+  var savedList = document.getElementById('saved');
+  function nativeCall(method, args) {
+    var cap = window.Capacitor;
+    if (!(cap && cap.isNativePlatform && cap.isNativePlatform())) return Promise.reject(new Error('not in the app'));
+    return cap.nativePromise('NewsJuiceBrowser', method, args || {});
+  }
+  function renderSaved(items) {
+    savedList.innerHTML = items.map(function (a) {
+      var when = new Date(a.saved).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      return '<li class="row"><a href="#" data-id="' + esc(a.id) + '">' + esc(a.title || a.host) +
+        '<small>' + esc(a.host) + ' · ' + esc(when) + '</small></a></li>';
+    }).join('');
+    document.getElementById('saved-empty').hidden = items.length > 0;
+  }
+  // Called by the app whenever an article is saved or removed.
+  window.readingListChanged = function () {
+    nativeCall('readingList').then(function (r) { renderSaved((r && r.items) || []); }).catch(function () {});
+  };
+  savedList.addEventListener('click', function (e) {
+    var a = e.target.closest('a[data-id]');
+    if (!a) return;
+    e.preventDefault();
+    nativeCall('openSaved', { id: a.getAttribute('data-id') }).catch(function () { readingListChanged(); });
+  });
+  readingListChanged();
+
   function openURL(url) {
     // No bundler here, so call the native bridge directly instead of registerPlugin().
     var cap = window.Capacitor;
@@ -270,8 +292,8 @@
     var url = toURL(field.value);
     if (!url) {
       hint.textContent = /\s/.test(field.value.trim())
-        ? 'Type a site or article address, like ndtv.com (searching isn’t supported yet).'
-        : 'That doesn’t look like a web address. Try something like ndtv.com.';
+        ? 'Type a web address (searching isn’t supported yet).'
+        : 'That doesn’t look like a web address. Try something like example.com.';
       return;
     }
     hint.textContent = '';
