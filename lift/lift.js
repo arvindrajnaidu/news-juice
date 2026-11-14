@@ -195,8 +195,38 @@
     return !!og && /article/i.test(og.content || '');
   }
 
+  // A pop-up that blocks the page, such as a paywall, a sign-in or subscribe box, or a
+  // full-screen ad: the page's scrolling is locked and a fixed layer or dialog covers
+  // a large part of the screen. News Lens doesn't read around it: the user deals with
+  // it on the page first (closes it, signs in or subscribes).
+  function blockingPopup() {
+    var locked = [document.documentElement, document.body].some(function (el) {
+      if (!el) return false;
+      var s = getComputedStyle(el);
+      return s.overflow === 'hidden' || s.overflowY === 'hidden' || s.position === 'fixed';
+    });
+    if (!locked) return false;
+    var area = innerWidth * innerHeight;
+    var all = document.querySelectorAll('body *');
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      var st = getComputedStyle(el);
+      if (st.position === 'sticky' || !isOverlay(el, st)) continue;
+      // Layers the on-page picker hid for a moment still count.
+      if (!el.hasAttribute('data-nj-hid') && isHidden(el, st)) continue;
+      var r = el.getBoundingClientRect();
+      var w = Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0));
+      var h = Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
+      if (w * h >= 0.3 * area) return true;
+    }
+    return false;
+  }
+
   function lift(options) {
     var opts = Object.assign({}, DEFAULTS, options || {});
+    if (!opts.ignorePopups && blockingPopup()) {
+      return { ok: false, reason: 'popup', url: location.href, host: location.hostname.replace(/^www\./, '') };
+    }
     var blocks = collectBlocks(document.body, opts);
     var groups = groupBlocks(blocks, opts);
     // For pick.js: the page element and style group of each block, in order.

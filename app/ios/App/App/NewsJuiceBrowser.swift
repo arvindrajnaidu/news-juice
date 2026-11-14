@@ -52,6 +52,9 @@ public class NewsJuiceBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "open", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "forgetSite", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "readingList", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "openSaved", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "removeSaved", returnType: CAPPluginReturnPromise),
     ]
 
     @objc func open(_ call: CAPPluginCall) {
@@ -62,6 +65,35 @@ public class NewsJuiceBrowserPlugin: CAPPlugin, CAPBridgedPlugin {
         }
         DispatchQueue.main.async {
             self.bridge?.viewController?.present(BrowserViewController(url: url), animated: true)
+            call.resolve()
+        }
+    }
+
+    /// The reading list for the start screen, newest first (no article text).
+    @objc func readingList(_ call: CAPPluginCall) {
+        let items = ReadingList.all().map { item -> [String: Any] in
+            ["id": item.id, "title": item.title, "host": item.host, "url": item.url,
+             "saved": Int(item.saved.timeIntervalSince1970 * 1000)]
+        }
+        call.resolve(["items": items])
+    }
+
+    /// Opens a saved article from the reading list (works offline).
+    @objc func openSaved(_ call: CAPPluginCall) {
+        guard let id = call.getString("id"), let item = ReadingList.item(id: id) else {
+            call.reject("No such article")
+            return
+        }
+        DispatchQueue.main.async {
+            self.bridge?.viewController?.present(SavedArticleViewController(item: item), animated: true)
+            call.resolve()
+        }
+    }
+
+    @objc func removeSaved(_ call: CAPPluginCall) {
+        guard let id = call.getString("id") else { call.reject("id is required"); return }
+        DispatchQueue.main.async {
+            ReadingList.remove(id: id)
             call.resolve()
         }
     }
@@ -140,14 +172,14 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
     /// Where the reader's filter came from: "own", "suggested" or "none".
     private var filterSource = "none"
 
-    private static let bar = UIColor { $0.userInterfaceStyle == .dark
+    static let bar = UIColor { $0.userInterfaceStyle == .dark
         ? UIColor(red: 0.13, green: 0.125, blue: 0.11, alpha: 1)
         : UIColor(red: 0.953, green: 0.937, blue: 0.902, alpha: 1) }
     /// Deep teal for the main actions (white on it); highlighter yellow only marks picked text.
-    private static let accent = UIColor(red: 0.122, green: 0.435, blue: 0.42, alpha: 1)
+    static let accent = UIColor(red: 0.122, green: 0.435, blue: 0.42, alpha: 1)
     /// The accent teal for icon controls (lighter in dark mode, to read on the dark bar).
     /// Grey is only for things that are disabled.
-    private static let iconTint = UIColor { $0.userInterfaceStyle == .dark
+    static let iconTint = UIColor { $0.userInterfaceStyle == .dark
         ? UIColor(red: 0.37, green: 0.72, blue: 0.69, alpha: 1)
         : UIColor(red: 0.122, green: 0.435, blue: 0.42, alpha: 1) }
     private static let ink = UIColor(red: 0.114, green: 0.106, blue: 0.094, alpha: 1)
@@ -401,7 +433,7 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
             button.heightAnchor.constraint(equalToConstant: 44).isActive = true
         }
         iconButton(changeButton, "magnifyingglass", "Edit filter") { [weak self] in self?.editOnPage() }
-        iconButton(shareButton, "square.and.arrow.up", "Share filter") { [weak self] in self?.shareFilter() }
+        iconButton(shareButton, "square.and.arrow.up", "Share or add to reading list") { [weak self] in self?.shareFilter() }
         iconButton(listenButton, "headphones", "Listen") { [weak self] in self?.listen() }
         iconButton(textButton, "textformat.size", "Text size") {}
         textButton.showsMenuAsPrimaryAction = true
@@ -513,7 +545,11 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   obj["ok"] as? Bool == true else {
                 NSLog("NewsJuice lift failed: %@", String(describing: result))
-                self.flash("Nothing to filter on this page")
+                if case .success(let value) = result, let json = value as? String, json.contains("\"reason\":\"popup\"") {
+                    self.popupInTheWay()
+                } else {
+                    self.flash("Nothing to filter on this page")
+                }
                 return
             }
             let groups = obj["groups"] as? [[String: Any]] ?? []
@@ -735,6 +771,11 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         updateBar(lifted: lifted, kinds: kinds)
     }
 
+    /// reader.js: "View original" (or the site's name) over the article.
+    func showOriginal() {
+        if mode == .read { toPage() }
+    }
+
     /// reader.js: a link in the reader was tapped. Open it, and if the site has a
     /// recipe, keep the reader up and lift the new page as soon as it loads.
     func openFromReader(_ url: URL) {
@@ -879,26 +920,43 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         RecipeHandler.recipe(forHost: host) != nil || SuggestedFilters.hasAny(host: host)
     }
 
-    /// Shares the filter as it stands (the picks on screen, plus the site's picks for its
-    /// other kinds of page) as a link; see ShareLinks.
+    /// The share sheet: shares the filter as it stands (the picks on screen, plus the site's
+    /// picks for its other kinds of page) as a link (see ShareLinks), and, like Safari,
+    /// offers Add to Reading List, which keeps the filtered article on this device.
     private func shareFilter() {
         guard let host = webView.url?.host else { return }
-        readerView.evaluateJavaScript("window.NewsJuice && NewsJuice.currentRecipe()") { [weak self] value, _ in
-            guard let self, let keep = value as? [String], !keep.isEmpty,
-                  let link = ShareLinks.link(host: host, keep: keep) else { return }
+        let js = "window.NewsJuice ? JSON.stringify({ keep: NewsJuice.currentRecipe(), article: NewsJuice.savedArticle() }) : null"
+        readerView.evaluateJavaScript(js) { [weak self] value, _ in
+            guard let self, let text = value as? String, let data = text.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
             let site = RecipeHandler.normalize(host)
-            NSLog("NewsJuice sharing %@", link.absoluteString)
-            let sheet = UIActivityViewController(
-                activityItems: ["My News Lens filter for \(site): just the text worth reading.", link],
-                applicationActivities: nil)
+            var items: [Any] = []
+            if let keep = obj["keep"] as? [String], !keep.isEmpty, let link = ShareLinks.link(host: host, keep: keep) {
+                NSLog("NewsJuice sharing %@", link.absoluteString)
+                items = ["My News Lens filter for \(site): just the text worth reading.", link]
+            } else if let page = self.webView.url {
+                items = [page]
+            }
+            var activities: [UIActivity] = []
+            if let article = obj["article"] as? [String: Any], let html = article["html"] as? String, !html.isEmpty,
+               let url = (article["url"] as? String).flatMap(URL.init(string:)) ?? self.webView.url {
+                let title = (article["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? site
+                activities.append(ReadingListActivity { [weak self] in
+                    ReadingList.add(url: url.absoluteString, host: site, title: title, html: html)
+                    self?.flash("Saved to your reading list")
+                })
+            }
+            guard !items.isEmpty else { return }
+            let sheet = UIActivityViewController(activityItems: items, applicationActivities: activities)
             sheet.popoverPresentationController?.sourceView = self.shareButton
             self.present(sheet, animated: true)
         }
     }
 
-    /// Listen (reading aloud) isn't launched yet: its button keeps its place in the bar,
-    /// unseen, so the magnifier stays centred. Flip this to bring it back.
-    static let listenEnabled = false
+    /// Listen (reading aloud). Since 1.1 it uses only the iPhone's own voice, on the
+    /// device (Narrator.aiVoice is off). Set false to hide the button again; it keeps its
+    /// place in the bar, unseen.
+    static let listenEnabled = true
 
     /// The reading view's toolbar along the bottom: back, then the reading tools.
     private func makeReaderBar() {
@@ -937,46 +995,13 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
 
     // MARK: Text size
 
-    /// Steps of the reader's own size control, on top of the iPhone's text size.
-    private static let textScales: [CGFloat] = [0.85, 1, 1.15, 1.3, 1.5]
-
-    private var textScale: CGFloat {
-        get { CGFloat(UserDefaults.standard.object(forKey: "NJTextScale") as? Double ?? 1) }
-        set { UserDefaults.standard.set(Double(newValue), forKey: "NJTextScale"); applyTextStyle() }
-    }
-
-    private var textSans: Bool {
-        get { UserDefaults.standard.bool(forKey: "NJTextSans") }
-        set { UserDefaults.standard.set(newValue, forKey: "NJTextSans"); applyTextStyle() }
-    }
-
-    /// The reader's type scale: the iPhone's text size (Dynamic Type, relative to the
-    /// standard 17pt body, capped so pages still fit) times the reader's own setting.
+    /// The reader's type scale (see ReaderText), applied to this reader.
     private func applyTextStyle() {
-        let system = min(UIFontMetrics(forTextStyle: .body).scaledValue(for: 17) / 17, 1.8)
-        let scale = system * textScale
-        readerView?.evaluateJavaScript(
-            "window.NewsJuice && NewsJuice.setTextStyle && NewsJuice.setTextStyle({ scale: \(scale), sans: \(textSans) })")
+        ReaderText.apply(to: readerView)
     }
 
     private func textMenuItems() -> [UIMenuElement] {
-        let scales = Self.textScales
-        let i = scales.firstIndex(of: textScale) ?? 1
-        let larger = UIAction(title: "Larger", image: UIImage(systemName: "textformat.size.larger"),
-                              attributes: i + 1 < scales.count ? [] : .disabled) { [weak self] _ in
-            self?.textScale = scales[min(i + 1, scales.count - 1)]
-        }
-        let smaller = UIAction(title: "Smaller", image: UIImage(systemName: "textformat.size.smaller"),
-                               attributes: i > 0 ? [] : .disabled) { [weak self] _ in
-            self?.textScale = scales[max(i - 1, 0)]
-        }
-        let reset = UIAction(title: "Default size", attributes: textScale == 1 ? .disabled : []) { [weak self] _ in
-            self?.textScale = 1
-        }
-        let serif = UIAction(title: "Serif", state: textSans ? .off : .on) { [weak self] _ in self?.textSans = false }
-        let sans = UIAction(title: "Sans serif", state: textSans ? .on : .off) { [weak self] _ in self?.textSans = true }
-        return [UIMenu(options: .displayInline, children: [larger, smaller, reset]),
-                UIMenu(options: .displayInline, children: [serif, sans])]
+        ReaderText.menuItems { [weak self] in self?.applyTextStyle() }
     }
 
     /// Reads the filtered page aloud, from the top.
@@ -1005,6 +1030,22 @@ final class BrowserViewController: UIViewController, WKNavigationDelegate, WKUID
         player.isHidden = true
         readerView?.evaluateJavaScript("window.NewsJuice && NewsJuice.speaking(null)")
         updateBar(lifted: lastCounts.lifted, kinds: lastCounts.kinds)
+    }
+
+    /// The page has a pop-up in the way (a paywall, sign-in or subscribe box, a full-screen
+    /// ad). News Lens doesn't read around it: show the page and ask the user to deal with
+    /// the pop-up there first.
+    private func popupInTheWay() {
+        if mode == .select { endPicking() }
+        if mode != .page { toPage() }
+        updateBar(lifted: 0, kinds: 0)
+        let alert = UIAlertController(
+            title: "Close the pop-up first",
+            message: "This page is showing a pop-up, such as a sign-in or subscription box. " +
+                "Close it on the page (or sign in), then tap Filter again.",
+            preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
     }
 
     private func flash(_ text: String) {
@@ -1257,6 +1298,9 @@ final class RecipeHandler: NSObject, WKScriptMessageHandler {
         case "navigate":
             if let url = (body["url"] as? String).flatMap(URL.init(string:)) { browser?.openFromReader(url) }
             return
+        case "original":
+            browser?.showOriginal()
+            return
         default:
             break
         }
@@ -1394,7 +1438,13 @@ enum ShareLinks {
 /// Suggested filters: one filters.json that Arvind keeps (a public gist; see docs/filters.md),
 /// fetched at most once a day with If-None-Match and kept for offline use, with a copy
 /// bundled in the app for first launch. The user's own filter (RecipeHandler) always wins.
+///
+/// Off since 1.1: App Review (5.2.2) read ready-made filters for named publishers as the
+/// app targeting their sites. Every filter is now the user's own (or one shared with
+/// them by link). Nothing is fetched or bundled while this is off.
 enum SuggestedFilters {
+    static let enabled = false
+
     /// The gist's raw URL, without a revision hash so it always serves the latest edit.
     static let defaultURL = URL(string:
         "https://gist.githubusercontent.com/arvindrajnaidu/aec29d9de36b300bc4e8192745d65004/raw/filters.json")!
@@ -1414,6 +1464,7 @@ enum SuggestedFilters {
     private static var fetching = false
 
     private static func load() -> [String: Any] {
+        guard enabled else { return [:] }
         let cached = UserDefaults.standard.dictionary(forKey: cacheKey)?["body"] as? Data
         if let sites = cached.flatMap(parse) { return sites }
         let bundled = Bundle.main.url(forResource: "filters", withExtension: "json", subdirectory: "public/filters")
@@ -1449,6 +1500,7 @@ enum SuggestedFilters {
     }
 
     static func refreshIfStale(then done: (() -> Void)? = nil) {
+        guard enabled else { done?(); return }
         let cache = UserDefaults.standard.dictionary(forKey: cacheKey) ?? [:]
         if let checked = cache["checked"] as? Date, Date().timeIntervalSince(checked) < maxAge {
             done?(); return
@@ -1487,6 +1539,11 @@ enum SuggestedFilters {
 final class Narrator: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
     struct Part { let text: String; let head: Bool }
 
+    /// The AI voice sends the article's text to our server (and its shared cache). Off
+    /// since 1.1: reading aloud uses only the iPhone's built-in voice, so nothing a user
+    /// reads leaves the phone.
+    static let aiVoice = false
+
     static let speeds: [Float] = [1, 1.25, 1.5, 2, 0.8]
     private let synth = AVSpeechSynthesizer()
     private var audio: AVAudioPlayer?
@@ -1522,7 +1579,7 @@ final class Narrator: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelega
         self.title = title
         self.site = site
         clips = [:]
-        usingAI = true
+        usingAI = Self.aiVoice
         let sample = parts.prefix(20).map(\.text).joined(separator: " ")
         language = NLLanguageRecognizer.dominantLanguage(for: sample)?.rawValue ?? "en"
         voice = Self.voice(for: sample)
@@ -1846,13 +1903,13 @@ final class PlayerBar: UIView {
             voiceLabel.topAnchor.constraint(equalTo: controls.bottomAnchor, constant: 2),
             voiceLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
         ])
-        update(playing: true, speed: 1, ai: true)
+        update(playing: true, speed: 1, ai: Narrator.aiVoice)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     func update(playing: Bool, speed rate: Float, ai: Bool) {
-        voiceLabel.text = ai ? "AI voice" : "Built-in voice"
+        voiceLabel.text = ai ? "AI voice" : "iPhone voice"
         play.configuration?.image = UIImage(systemName: playing ? "pause.fill" : "play.fill",
                                             withConfiguration: UIImage.SymbolConfiguration(pointSize: 28, weight: .semibold))
         play.accessibilityLabel = playing ? "Pause" : "Play"
@@ -2149,6 +2206,338 @@ final class SideSlide: NSObject, UIViewControllerTransitioningDelegate, UIViewCo
             let cancelled = context.transitionWasCancelled
             if cancelled && !self.presenting { to.removeFromSuperview() }
             context.completeTransition(!cancelled)
+        }
+    }
+}
+
+// MARK: - Reading text
+
+/// The reading view's text size and face, shared by the filtered view and saved articles:
+/// the iPhone's text size (Dynamic Type, relative to the standard 17pt body, capped so
+/// pages still fit) times the reader's own Aa setting, remembered for every site.
+enum ReaderText {
+    static let scales: [CGFloat] = [0.85, 1, 1.15, 1.3, 1.5]
+
+    static var scale: CGFloat {
+        get { CGFloat(UserDefaults.standard.object(forKey: "NJTextScale") as? Double ?? 1) }
+        set { UserDefaults.standard.set(Double(newValue), forKey: "NJTextScale") }
+    }
+
+    static var sans: Bool {
+        get { UserDefaults.standard.bool(forKey: "NJTextSans") }
+        set { UserDefaults.standard.set(newValue, forKey: "NJTextSans") }
+    }
+
+    static func apply(to webView: WKWebView?) {
+        let system = min(UIFontMetrics(forTextStyle: .body).scaledValue(for: 17) / 17, 1.8)
+        webView?.evaluateJavaScript(
+            "window.NewsJuice && NewsJuice.setTextStyle && NewsJuice.setTextStyle({ scale: \(system * scale), sans: \(sans) })")
+    }
+
+    /// The Aa menu: larger, smaller, default size; serif or sans. changed runs after each pick.
+    static func menuItems(changed: @escaping () -> Void) -> [UIMenuElement] {
+        let scales = ReaderText.scales
+        let i = scales.firstIndex(of: ReaderText.scale) ?? 1
+        let larger = UIAction(title: "Larger", image: UIImage(systemName: "textformat.size.larger"),
+                              attributes: i + 1 < scales.count ? [] : .disabled) { _ in
+            ReaderText.scale = scales[min(i + 1, scales.count - 1)]; changed()
+        }
+        let smaller = UIAction(title: "Smaller", image: UIImage(systemName: "textformat.size.smaller"),
+                               attributes: i > 0 ? [] : .disabled) { _ in
+            ReaderText.scale = scales[max(i - 1, 0)]; changed()
+        }
+        let reset = UIAction(title: "Default size", attributes: scale == 1 ? .disabled : []) { _ in ReaderText.scale = 1; changed() }
+        let serif = UIAction(title: "Serif", state: sans ? .off : .on) { _ in ReaderText.sans = false; changed() }
+        let sansSerif = UIAction(title: "Sans serif", state: sans ? .on : .off) { _ in ReaderText.sans = true; changed() }
+        return [UIMenu(options: .displayInline, children: [larger, smaller, reset]),
+                UIMenu(options: .displayInline, children: [serif, sansSerif])]
+    }
+}
+
+// MARK: - Reading list
+
+/// Articles the user saved to read later, kept only on this device (Application Support,
+/// reading-list.json): the filtered text as the reader showed it, the page's address and
+/// title. Nothing is uploaded. Newest first.
+enum ReadingList {
+    struct Item: Codable {
+        let id: String
+        let url: String
+        let host: String
+        let title: String
+        let html: String
+        let saved: Date
+    }
+
+    private static var file: URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("reading-list.json")
+    }
+
+    static func all() -> [Item] {
+        guard let data = try? Data(contentsOf: file) else { return [] }
+        return (try? JSONDecoder().decode([Item].self, from: data)) ?? []
+    }
+
+    static func item(id: String) -> Item? {
+        all().first { $0.id == id }
+    }
+
+    /// Saves an article (again: an article already in the list moves to the top, updated).
+    static func add(url: String, host: String, title: String, html: String) {
+        var items = all().filter { $0.url != url }
+        items.insert(Item(id: UUID().uuidString, url: url, host: host, title: title, html: html, saved: Date()), at: 0)
+        write(items)
+    }
+
+    static func remove(id: String) {
+        write(all().filter { $0.id != id })
+    }
+
+    private static func write(_ items: [Item]) {
+        if let data = try? JSONEncoder().encode(items) {
+            try? data.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        }
+        // The start screen lists the reading list; tell it to redraw.
+        let home = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows).compactMap(\.rootViewController).compactMap { $0 as? CAPBridgeViewController }.first
+        home?.webView?.evaluateJavaScript("window.readingListChanged && readingListChanged()")
+    }
+}
+
+/// "Add to Reading List" in the filtered view's share sheet, as in Safari.
+final class ReadingListActivity: UIActivity {
+    private let action: () -> Void
+
+    init(action: @escaping () -> Void) {
+        self.action = action
+        super.init()
+    }
+
+    override class var activityCategory: UIActivity.Category { .action }
+    override var activityType: UIActivity.ActivityType? { UIActivity.ActivityType("com.buzzie.newslens.reading-list") }
+    override var activityTitle: String? { "Add to Reading List" }
+    override var activityImage: UIImage? { UIImage(systemName: "eyeglasses") }
+    override func canPerform(withActivityItems activityItems: [Any]) -> Bool { true }
+
+    override func perform() {
+        DispatchQueue.main.async { self.action() }
+        activityDidFinish(true)
+    }
+}
+
+/// Passes the saved-article reader's messages on without WebKit holding the controller.
+final class SavedArticleHandler: NSObject, WKScriptMessageHandler {
+    weak var owner: SavedArticleViewController?
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any],
+              let url = (body["url"] as? String).flatMap(URL.init(string:)),
+              let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" else { return }
+        owner?.openPage(url)
+    }
+}
+
+/// An article from the reading list, read from the copy on the device (works offline).
+/// Bottom bar: back, remove from the list, text size. "View original" and links in the
+/// text open the page in the browser.
+final class SavedArticleViewController: UIViewController, WKNavigationDelegate {
+    private let item: ReadingList.Item
+    private var webView: WKWebView!
+    private let backButton = UIButton(type: .system)
+    private let removeButton = UIButton(type: .system)
+    private let textButton = UIButton(type: .system)
+    private var textSizeObserver: NSObjectProtocol?
+    private var homeSwipe: UIPercentDrivenInteractiveTransition?
+
+    init(item: ReadingList.Item) {
+        self.item = item
+        super.init(nibName: nil, bundle: nil)
+        modalPresentationStyle = .fullScreen
+        transitioningDelegate = SideSlide.shared
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    deinit {
+        if let textSizeObserver { NotificationCenter.default.removeObserver(textSizeObserver) }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        guard isBeingDismissed || presentingViewController == nil else { return }
+        webView?.configuration.userContentController.removeAllScriptMessageHandlers()
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = BrowserViewController.bar
+
+        let config = WKWebViewConfiguration()
+        let handler = SavedArticleHandler()
+        handler.owner = self
+        config.userContentController.add(handler, name: "newsJuice")
+        webView = WKWebView(frame: .zero, configuration: config)
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
+        webView.navigationDelegate = self
+        if let page = Bundle.main.url(forResource: "reader", withExtension: "html", subdirectory: "public") {
+            webView.loadFileURL(page, allowingReadAccessTo: page.deletingLastPathComponent())
+        }
+        let edge = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(edgeSwipe(_:)))
+        edge.edges = .left
+        webView.addGestureRecognizer(edge)
+        webView.scrollView.panGestureRecognizer.require(toFail: edge)
+
+        // Top: the site and that this is the saved copy.
+        let topBar = UIView()
+        topBar.backgroundColor = BrowserViewController.bar
+        let title = UILabel()
+        title.font = .systemFont(ofSize: 15, weight: .semibold)
+        title.text = item.host
+        let subtitle = UILabel()
+        subtitle.font = .systemFont(ofSize: 12)
+        subtitle.textColor = .secondaryLabel
+        subtitle.text = "Reading list · saved " + item.saved.formatted(date: .abbreviated, time: .omitted)
+        let titles = UIStackView(arrangedSubviews: [title, subtitle])
+        titles.axis = .vertical
+        let topRule = UIView()
+        topRule.backgroundColor = .separator
+
+        // Bottom: back, remove, text size.
+        let icon = { (button: UIButton, symbol: String, label: String) in
+            var c = UIButton.Configuration.plain()
+            c.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .semibold))
+            c.contentInsets = .zero
+            c.baseForegroundColor = BrowserViewController.iconTint
+            button.configuration = c
+            button.accessibilityLabel = label
+            button.widthAnchor.constraint(equalToConstant: 44).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        }
+        icon(backButton, "chevron.backward", "Back")
+        icon(removeButton, "trash", "Remove from reading list")
+        icon(textButton, "textformat.size", "Text size")
+        backButton.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true) }, for: .primaryActionTriggered)
+        removeButton.addAction(UIAction { [weak self] _ in self?.remove() }, for: .primaryActionTriggered)
+        textButton.showsMenuAsPrimaryAction = true
+        textButton.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] done in
+            done(ReaderText.menuItems { ReaderText.apply(to: self?.webView) })
+        }])
+        let bottomBar = UIView()
+        bottomBar.backgroundColor = BrowserViewController.bar
+        let bottomRule = UIView()
+        bottomRule.backgroundColor = .separator
+        let tools = UIStackView(arrangedSubviews: [backButton, removeButton, textButton])
+        tools.distribution = .equalSpacing
+        tools.alignment = .center
+
+        for v in [webView!, topBar, bottomBar] as [UIView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(v)
+        }
+        for v in [titles, topRule] as [UIView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            topBar.addSubview(v)
+        }
+        for v in [bottomRule, tools] as [UIView] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            bottomBar.addSubview(v)
+        }
+        let guide = view.safeAreaLayoutGuide
+        NSLayoutConstraint.activate([
+            topBar.topAnchor.constraint(equalTo: guide.topAnchor),
+            topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topBar.heightAnchor.constraint(equalToConstant: 52),
+            titles.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 20),
+            titles.trailingAnchor.constraint(lessThanOrEqualTo: topBar.trailingAnchor, constant: -20),
+            titles.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            topRule.leadingAnchor.constraint(equalTo: topBar.leadingAnchor),
+            topRule.trailingAnchor.constraint(equalTo: topBar.trailingAnchor),
+            topRule.bottomAnchor.constraint(equalTo: topBar.bottomAnchor),
+            topRule.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
+
+            webView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: bottomBar.topAnchor),
+
+            bottomBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bottomBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            bottomBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            bottomBar.topAnchor.constraint(equalTo: guide.bottomAnchor, constant: -52),
+            bottomRule.topAnchor.constraint(equalTo: bottomBar.topAnchor),
+            bottomRule.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor),
+            bottomRule.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor),
+            bottomRule.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
+            tools.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: 4),
+            tools.heightAnchor.constraint(equalToConstant: 44),
+            tools.leadingAnchor.constraint(equalTo: bottomBar.leadingAnchor, constant: 16),
+            tools.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor, constant: -16),
+        ])
+
+        textSizeObserver = NotificationCenter.default.addObserver(
+            forName: UIContentSizeCategory.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            ReaderText.apply(to: self?.webView)
+        }
+    }
+
+    /// The reader page is ready: show the saved copy in it.
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        let article: [String: Any] = ["title": item.title, "url": item.url, "host": item.host, "html": item.html]
+        guard let data = try? JSONSerialization.data(withJSONObject: article),
+              let json = String(data: data, encoding: .utf8) else { return }
+        ReaderText.apply(to: webView)
+        webView.evaluateJavaScript("window.NewsJuice && NewsJuice.showSaved(\(json))")
+    }
+
+    /// Only the app's own reader page loads here; links go to the browser.
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        decisionHandler(action.request.url?.isFileURL == true ? .allow : .cancel)
+    }
+
+    /// "View original" or a link in the text: open it in the browser, over this article.
+    func openPage(_ url: URL) {
+        present(BrowserViewController(url: url), animated: true)
+    }
+
+    private func remove() {
+        let alert = UIAlertController(title: "Remove from your reading list?", message: nil, preferredStyle: .actionSheet)
+        alert.addAction(UIAlertAction(title: "Remove", style: .destructive) { [weak self] _ in
+            guard let self else { return }
+            ReadingList.remove(id: self.item.id)
+            self.dismiss(animated: true)
+        })
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.popoverPresentationController?.sourceView = removeButton
+        present(alert, animated: true)
+    }
+
+    /// Swiping in from the left edge goes back to Home, following the finger.
+    @objc private func edgeSwipe(_ gesture: UIScreenEdgePanGestureRecognizer) {
+        let progress = min(1, max(0, gesture.translation(in: view).x / view.bounds.width))
+        switch gesture.state {
+        case .began:
+            homeSwipe = UIPercentDrivenInteractiveTransition()
+            SideSlide.shared.interaction = homeSwipe
+            dismiss(animated: true)
+        case .changed:
+            homeSwipe?.update(progress)
+        case .ended, .cancelled:
+            guard let swipe = homeSwipe else { return }
+            if gesture.state == .ended && (progress > 1 / 3 || gesture.velocity(in: view).x > 600) {
+                swipe.finish()
+            } else {
+                swipe.cancel()
+            }
+            homeSwipe = nil
+            SideSlide.shared.interaction = nil
+        default:
+            break
         }
     }
 }

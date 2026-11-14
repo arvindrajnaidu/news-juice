@@ -52,6 +52,8 @@
       if (pos !== 'fixed' && pos !== 'sticky') return;
       hidden.push([el, el.style.getPropertyValue('visibility'), el.style.getPropertyPriority('visibility')]);
       el.style.setProperty('visibility', 'hidden', 'important');
+      // lift.js still counts it as a pop-up if it blocks the page (blockingPopup).
+      el.setAttribute('data-nj-hid', '');
     });
     return hidden;
   }
@@ -87,23 +89,8 @@
     return collapsed;
   }
 
-  // Pop-ups (paywalls, sign-up and consent boxes) lock the page while they're up:
-  // overflow hidden, or the body pinned with position fixed. The pop-up itself is
-  // hidden while picking, but the lock would stay and the page couldn't scroll. So the
-  // page is unlocked while picking, and the site's own settings come back afterwards.
-  var UNLOCK = { overflow: 'visible', 'overflow-y': 'auto', height: 'auto', 'max-height': 'none',
-    position: 'static', top: 'auto', 'touch-action': 'auto' };
-  function unlockScroll() {
-    var saved = [];
-    [document.documentElement, document.body].forEach(function (el) {
-      if (!el) return;
-      Object.keys(UNLOCK).forEach(function (prop) {
-        saved.push([el, prop, el.style.getPropertyValue(prop), el.style.getPropertyPriority(prop)]);
-        el.style.setProperty(prop, el === document.documentElement && prop === 'overflow' ? 'auto' : UNLOCK[prop], 'important');
-      });
-    });
-    return saved;
-  }
+  // A page locked by a pop-up (a paywall, sign-up or consent box) isn't unlocked here:
+  // lift.js won't filter a page with a blocking pop-up until the user deals with it.
 
   // The nearest element under a point that scrolls on its own (an inner scroll area),
   // or null when the page itself scrolls there.
@@ -140,7 +127,7 @@
     els.forEach(function (el) { for (var n = el; n && !holding.has(n); n = n.parentElement) holding.add(n); });
     var seenFixed = new WeakSet(), seenAds = new WeakSet();
     var hidden = hideFixed([], seenFixed);
-    var unlocked = unlockScroll();
+    var unlocked = [];
     var collapsed = collapseAds([], holding, seenAds);
     document.documentElement.classList.add('nj-picking');
     document.documentElement.append(style, wash, layer, shield);
@@ -299,6 +286,7 @@
     removeEventListener('resize', state.replace);
     [state.style, state.wash, state.layer, state.shield].forEach(function (n) { n.remove(); });
     state.hidden.forEach(function (h) {
+      h[0].removeAttribute('data-nj-hid');
       if (h[1]) h[0].style.setProperty('visibility', h[1], h[2]);
       else h[0].style.removeProperty('visibility');
     });
